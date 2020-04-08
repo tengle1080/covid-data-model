@@ -8,18 +8,24 @@ from libs.datasets import FIPSPopulation
 from libs.datasets.model_output_schema import MODEL_OUTPUT_SCHEMA, MODEL_OUTPUT_SCHEMA_EXCLUDED_COLUMNS
 from libs.datasets.projections_schema import CALCULATED_PROJECTION_HEADERS_STATES, CALCULATED_PROJECTION_HEADERS_COUNTIES
 
+
 def _calc_short_fall(x):
     return abs(x.beds - x.all_hospitalized) if x.all_hospitalized > x.beds else 0
+
 
 def _get_hospitals_and_shortfalls(df, date_out):
     first_record_after_date = df[(df.date > date_out)].iloc[0]
     hospital_short_fall_columns = ['all_hospitalized', 'short_fall']
     return tuple(first_record_after_date[hospital_short_fall_columns].values)
 
+
 def _read_json_as_df(path):
     # TODO: read this from a dataset class
-    df = pd.DataFrame.from_records(simplejson.load(open(path,'r')),
-    columns=MODEL_OUTPUT_SCHEMA, exclude=MODEL_OUTPUT_SCHEMA_EXCLUDED_COLUMNS)
+    df = pd.DataFrame.from_records(
+        simplejson.load(open(path,'r')),
+        columns=MODEL_OUTPUT_SCHEMA,
+        exclude=MODEL_OUTPUT_SCHEMA_EXCLUDED_COLUMNS
+    )
 
     df['date'] = pd.to_datetime(df.date)
     df['all_hospitalized'] = df['all_hospitalized'].astype('int')
@@ -27,9 +33,10 @@ def _read_json_as_df(path):
     df['dead'] = df['dead'].astype('int')
     return df
 
+
 def _calculate_projection_data(file_path):
     """
-    Given a file path, return the calculations we perform for that file. 
+    Given a file path, return the calculations we perform for that file.
     Note in the future maybe return a data type to keep type clarity
     """
     # get 16 and 32 days out from now
@@ -55,6 +62,7 @@ def _calculate_projection_data(file_path):
         return [hosp_16_days, hosp_32_days, short_fall_16_days, short_fall_32_days, mean_hospitalizations, mean_deaths, peak_hospitalizations_date, peak_deaths_date]
     return None
 
+
 def get_state_projections_df(input_dir, intervention_type):
     # for each state in our data look at the results we generated via run.py
     # to create the projections
@@ -71,7 +79,8 @@ def get_state_projections_df(input_dir, intervention_type):
         if projection_data:
             results.append([state] + projection_data)
     return pd.DataFrame(results, columns=CALCULATED_PROJECTION_HEADERS_STATES)
-    
+
+
 def get_county_projections_df(input_dir, intervention_type):
     # for each state in our data look at the results we generated via run.py
     # to create the projections

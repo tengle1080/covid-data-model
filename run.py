@@ -9,7 +9,7 @@ import os.path
 from collections import defaultdict
 import multiprocessing
 
-from libs.CovidTimeseriesModelSIR import CovidTimeseriesModelSIR
+from libs.models.covid_timeseries_model_sir import CovidTimeseriesModelSIR
 import simplejson
 import pandas as pd
 

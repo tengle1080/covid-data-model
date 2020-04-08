@@ -2,7 +2,7 @@ import logging
 import math
 import json
 import datetime
-
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -26,10 +26,9 @@ from .epi_models.HarvardEpi import (
 # )
 
 
+
+
 class CovidTimeseriesModelSIR:
-    # Initializer / Instance Attributes
-    def __init__(self):
-        logging.basicConfig(level=logging.ERROR)
 
     def initialize_parameters(self, model_parameters):
         """Perform all of the necessary setup prior to the model's execution"""

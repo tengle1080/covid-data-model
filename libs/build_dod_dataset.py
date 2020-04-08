@@ -17,7 +17,7 @@ from libs.us_state_abbrev import us_state_abbrev, us_fips
 from libs.datasets import FIPSPopulation
 from libs.functions.calculate_projections import get_state_projections_df, get_county_projections_df
 from libs.datasets.projections_schema import OUTPUT_COLUMN_REMAP
-from libs.datasets.results_schema import RESULT_DATA_COLUMNS_STATES, RESULT_DATA_COLUMNS_COUNTIES 
+from libs.datasets.results_schema import RESULT_DATA_COLUMNS_STATES, RESULT_DATA_COLUMNS_COUNTIES
 from libs.constants import NULL_VALUE
 
 # @TODO: Attempt today. If that fails, attempt yesterday.
@@ -51,20 +51,22 @@ def get_usa_by_county_df():
     raw_df = pd.read_csv(url, dtype={"FIPS": str})
     raw_df['FIPS'] = raw_df['FIPS'].astype(str).str.zfill(5)
 
-    column_mapping = {"Province_State": "Province/State",
-                    "Country_Region": "Country/Region",
-                    "Last_Update": "Last Update",
-                    "Lat": "Latitude",
-                    "Long_": "Longitude",
-                    "Combined_Key": "Combined Key",
-                    "Admin2": "County",
-                    "FIPS": "State/County FIPS Code"
-                    }
+    column_mapping = {
+        "Province_State": "Province/State",
+        "Country_Region": "Country/Region",
+        "Last_Update": "Last Update",
+        "Lat": "Latitude",
+        "Long_": "Longitude",
+        "Combined_Key": "Combined Key",
+        "Admin2": "County",
+        "FIPS": "State/County FIPS Code"
+    }
     remapped_df = raw_df.rename(columns=column_mapping)
 
     # USA only
     us_df = remapped_df[(remapped_df["Country/Region"] == "US")]
-    jhu_column_names = ["Province/State",
+    jhu_column_names = [
+        "Province/State",
         "Country/Region",
         "Last Update",
         "Latitude",
@@ -83,7 +85,8 @@ def get_usa_by_county_df():
     final_df = pd.DataFrame(us_df, columns=jhu_column_names)
     final_df['Last Update'] = pd.to_datetime(final_df['Last Update'])
     final_df['Last Update'] = final_df['Last Update'].dt.strftime(
-        '%-m/%-d/%Y %H:%M')
+        '%-m/%-d/%Y %H:%M'
+    )
 
     final_df['County'] = final_df['County'].replace(county_replace_with_null)
     final_df['Combined Key'] = final_df['Combined Key'].str.replace('Unassigned, ','')
@@ -119,6 +122,7 @@ def get_usa_by_county_with_projection_df(input_dir, intervention_type):
 
     assert counties['Combined Key'].value_counts().max() == 1
     return counties
+
 
 def get_usa_by_states_df(input_dir, intervention_type):
 

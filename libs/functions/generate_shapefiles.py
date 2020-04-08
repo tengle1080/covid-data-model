@@ -1,13 +1,15 @@
+import io
 import shapefile
-
 from urllib.parse import urlparse
 
 from libs.CovidDatasets import get_public_data_base_url
 from libs.constants import NULL_VALUE
 from libs.datasets.results_schema import NON_TYPED_FIELDS, NON_INTEGER_FIELDS
 
+
 def _file_uri_to_path(uri: str) -> str:
     return urlparse(uri).path
+
 
 def join_and_output_shapefile(df, shp_reader, pivot_shp_field, pivot_df_column, shp_writer):
     fields = [field for field in df.columns if field not in NON_TYPED_FIELDS]
@@ -46,19 +48,30 @@ def join_and_output_shapefile(df, shp_reader, pivot_shp_field, pivot_df_column, 
     print([(state, len(failed_dictionary[state])) for state in failed_dictionary])
     shp_writer.close()
 
-def get_usa_state_shapefile(use_state_df, shp, shx, dbf):
+
+def get_usa_state_shapefile(use_state_df):
+    shp = io.BytesIO()
+    shx = io.BytesIO()
+    dbf = io.BytesIO()
+
     shp_writer = shapefile.Writer(shp=shp, shx=shx, dbf=dbf)
     public_data_url = get_public_data_base_url()
     public_data_path = _file_uri_to_path(public_data_url)
-    join_and_output_shapefile(use_state_df,
-        shapefile.Reader(f'{public_data_path}/data/shapefiles-uscensus/tl_2019_us_state'),
-        'STATEFP', 'State/County FIPS Code', shp_writer)
+    reader = shapefile.Reader(f'{public_data_path}/data/shapefiles-uscensus/tl_2019_us_state')
+    join_and_output_shapefile(
+        use_state_df, reader, 'STATEFP', 'State/County FIPS Code', shp_writer
+    )
+    return shp, shx, dbf
 
-def get_usa_county_shapefile(county_df, shp, shx, dbf):
+
+def get_usa_county_shapefile(county_df):
+    shp = io.BytesIO()
+    shx = io.BytesIO()
+    dbf = io.BytesIO()
     shp_writer = shapefile.Writer(shp=shp, shx=shx, dbf=dbf)
     public_data_url = get_public_data_base_url()
     public_data_path = _file_uri_to_path(public_data_url)
+    reader = shapefile.Reader(f'{public_data_path}/data/shapefiles-uscensus/tl_2019_us_county')
+    join_and_output_shapefile(county_df, reader, 'GEOID', 'State/County FIPS Code', shp_writer)
 
-    join_and_output_shapefile(county_df,
-        shapefile.Reader(f'{public_data_path}/data/shapefiles-uscensus/tl_2019_us_county'),
-        'GEOID', 'State/County FIPS Code', shp_writer)
+    return shp, shx, dbf
