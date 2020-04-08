@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-
+import pathlib
 import datetime
 import logging
 import click
-from libs import build_params
+from libs.datasets import data_version
 import run
-print(run)
-WEB_DEPLOY_PATH = "../covid-projections/public/data"
+
+_logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -17,44 +17,73 @@ def main():
 @main.command("county")
 @click.option("--state", "-s")
 @click.option(
-    "--deploy",
-    is_flag=True,
-    help="Output data files to public data directory in local covid-projections.",
+    "--output",
+    "-o",
+    help="Output directory",
+    type=pathlib.Path,
+    default=pathlib.Path("results/county"),
 )
-def run_county(state=None, deploy=False):
+@data_version.with_git_version_click_option
+def run_county(
+    version: data_version.DataVersion, output, state=None
+):
     """Run county level model."""
     min_date = datetime.datetime(2020, 3, 7)
     max_date = datetime.datetime(2020, 7, 6)
 
-    output_dir = build_params.OUTPUT_DIR
-    if deploy:
-        output_dir = WEB_DEPLOY_PATH
-
     run.run_county_level_forecast(
-        min_date, max_date, country="USA", state=state, output_dir=output_dir
+        min_date, max_date, output, country="USA", state=state
     )
-    run.build_county_summary(min_date, state=state, output_dir=output_dir)
+    if not state:
+        version.write_file("county", output)
+    else:
+        _logger.info("Skip version file because this is not a full run")
+
+
+@main.command("county-summary")
+@click.option("--state", "-s")
+@click.option(
+    "--output",
+    "-o",
+    help="Output directory",
+    type=pathlib.Path,
+    default=pathlib.Path("results/county_summaries"),
+)
+@data_version.with_git_version_click_option
+def run_county_summary(version: data_version.DataVersion, output, state=None):
+    """Run county level model."""
+    min_date = datetime.datetime(2020, 3, 7)
+    run.build_county_summary(min_date, output, state=state)
+
+    # only write the version if we saved everything
+    if not state:
+        version.write_file("county_summary", output)
+    else:
+        _logger.info("Skip version file because this is not a full run")
 
 
 @main.command("state")
 @click.option("--state", "-s")
 @click.option(
-    "--deploy",
-    is_flag=True,
-    help="Output data files to public data directory in local covid-projections.",
+    "--output",
+    "-o",
+    help="Output directory",
+    type=pathlib.Path,
+    default=pathlib.Path("results/state"),
 )
-def run_state(state=None, deploy=False):
+@data_version.with_git_version_click_option
+def run_state(version: data_version.DataVersion, output, state=None):
     """Run State level model."""
     min_date = datetime.datetime(2020, 3, 7)
     max_date = datetime.datetime(2020, 7, 6)
 
-    output_dir = build_params.OUTPUT_DIR
-    if deploy:
-        output_dir = WEB_DEPLOY_PATH
-
-    run.run_state_level_forecast(
-        min_date, max_date, country="USA", state=state, output_dir=output_dir
-    )
+    run.run_state_level_forecast(min_date, max_date, output, country="USA", state=state)
+    _logger.info(f"Wrote output to {output}")
+    # only write the version if we saved everything
+    if not state:
+        version.write_file("states", output)
+    else:
+        _logger.info("Skip version file because this is not a full run")
 
 
 if __name__ == "__main__":
