@@ -62,12 +62,6 @@ class ModelRun:
         # Time before exposed are infectious (days)
         self.presymptomatic_period = 3
 
-        # Pecentage of asymptomatic, infectious [A] people
-        # out of all those who are infected
-        # make 0 to remove this stock
-        #'asymp_to_mild_ratio': 0.5,
-        self.percent_asymp = 0.3
-
         # Time mildly infected people stay sick before
         # hospitalization or recovery (days)
         self.duration_mild_infections = 6
@@ -119,8 +113,19 @@ class ModelRun:
         #
         ####################################################
 
-        self.hospitalization_rate = 0.2
+        # Pecentage of asymptomatic, infectious [A] people
+        # out of all those who are infected
+        # make 0 to remove this stock
+        self.percent_asymp = 0.3
+
+        self.percent_infectious_symptomatic = 1 - self.percent_asymp
+
+        self.hospitalization_rate = 0.10
         self.hospitalized_cases_requiring_icu_care = 0.25
+
+        self.percent_symptomatic_mild = (
+            self.percent_infectious_symptomatic - self.hospitalization_rate
+        )
 
         # changed this from CFR to make the calc of mu clearer
         self.death_rate_for_critical = 0.4
@@ -136,6 +141,18 @@ class ModelRun:
         # if true we calculatied the exposed initial stock from the infected number vs. leaving it at 0
         self.exposed_from_infected = True
         self.exposed_infected_ratio = 1
+
+        # different ways to model the actual data
+
+        # cases represent all infected symptomatic
+        # based on proportion of mild/hospitalized/icu
+        # described in params
+        # self.model_cases = "divided_into_infected"
+
+        # 1/4 cases are hopsitalized, mild and icu
+        # based on proporition of hopsitalized
+        # described in params
+        self.model_cases = "one_in_4_hospitalized"
 
         self.hospital_capacity_change_daily_rate = 1.05
         self.max_hospital_capacity_factor = 2.07
@@ -193,7 +210,7 @@ class ModelRun:
 
         timeseries = timeseries.get_subset(
             AggregationLevel.STATE,
-            after=min_date,
+            after=self.min_date,
             country=self.country,
             state=self.state,
         )
@@ -213,10 +230,15 @@ class ModelRun:
         else:
             self.start_date = self.override_model_start
 
-        # get a series of the relevant row in the db
+        self.actuals = self.timeseries.loc[(self.timeseries.date < self.start_date), :]
+        self.raw_actuals = self.actuals.copy()
+
+        # get a series of the relevant row in the df
         self.past_data = self.timeseries.loc[
             (self.timeseries.date == self.start_date), :
         ].iloc[0]
+
+        self.default_past_data = self.past_data.copy()
 
         return
 
@@ -241,26 +263,31 @@ class ModelRun:
         elif epi_model_type == "asymp":
             self.model_type = "asymp"
 
-            self.model_cols = [
-                "total",
-                "susceptible",
-                "exposed",
-                "infected",
-                "asymp",
-                "infected_a",
-                "infected_b",
-                "infected_c",
-                "recovered",
-                "dead",
-            ]
-
             from libs.epi_models.TalusSEIRClass import EpiRun
 
         self.epi_run = EpiRun("base", self)
         self.epi_run.generate_epi_params()
         self.epi_run.generate_initial_conditions()
+
+    def reload_params(self):
+        self.results_list = []
+        self.display_df = None
+
+        self.actuals = self.raw_actuals
+
+        self.epi_run.EpiParameters = None
+        self.epi_run.InitConditions = None
+
+        self.past_data = self.default_past_data
+
+        self.epi_run.generate_epi_params()
+        self.epi_run.generate_initial_conditions()
+
+    def run(self):
         self.epi_run.seir()
         self.epi_run.dataframe_ify()
+
+        self.results_list = [self.epi_run.display_df.copy()]
 
     def add_intervention(self, intervention):
         if self.model_type == "seir":
@@ -269,19 +296,65 @@ class ModelRun:
         elif self.model_type == "asymp":
             from libs.epi_models.TalusSEIRClass import Intervention
 
-        intervention["initial_conditions"] = self.epi_run.results_df[
-            (self.epi_run.results_df.index == intervention["start_date"])
-        ].iloc[0]
+        prior_run = self.results_list[-1].copy()
+
+        # if it's a future intervention, use the projections from that date
+        if intervention["type"] == "intervention":
+            intervention["initial_conditions"] = prior_run.loc[
+                (prior_run["date"] == intervention["start_date"])
+            ].iloc[0]
+
+        # if it's a past intervention that actually took place, we start from the
+        # same initial conditions as the run
+        elif intervention["type"] == "past-actual":
+            intervention["initial_conditions"] = self.epi_run.InitConditions
+        # if it's a past intervention that did not take place, start from the
+        # best date we have on the day of that intervention
+        elif intervention["type"] == "past-counterfactual":
+            intervention["initial_conditions"] = self.actuals[
+                (self.actuals.date == intervention["start_date"])
+            ].iloc[0]
+
+        prior_run = prior_run.loc[(prior_run["date"] < intervention["start_date"]), :]
+
+        intervention["prior_results"] = prior_run
 
         intervention_name = f"intervention_{self.state}_{intervention['name']}"
 
+        intervention["system_name"] = intervention_name
+
         self.interventions[intervention_name] = Intervention(intervention, self)
+
+    def run_all_interventions(self):
+
+        sorted_interventions = sorted(
+            list(self.interventions.values()),
+            key=lambda intervention: intervention.intervention[
+                "intervention_start_date"
+            ],
+        )
+
+        for intervention in sorted_interventions:
+            self.run_intervention(intervention.intervention["system_name"])
+
+    def run_intervention(self, name):
+
+        self.interventions[name].seir()
+        self.interventions[name].dataframe_ify()
+
+        self.results_list.append(self.interventions[name].display_df.copy())
+
+    def drop_interventions(self):
+        self.interventions = {}
+        self.run()
 
 
 def plot_df(df_to_plot, cols, title="", y_max=8000000):
     cols.append("date")
 
     df_to_plot = df_to_plot.loc[:, cols]
+
+    line_day = datetime.datetime.now() - datetime.timedelta(days=2)
 
     x_dates = df_to_plot["date"].dt.strftime("%Y-%m-%d").sort_values().unique()
 
@@ -293,6 +366,7 @@ def plot_df(df_to_plot, cols, title="", y_max=8000000):
 
     plt.figure(figsize=(15, 8))
 
+    plt.axvline(line_day, 0, y_max, linestyle="--")
     plt.ylim(0, y_max)
 
     plt.title(title)
@@ -339,6 +413,15 @@ def prep_plot(prep_df, chart_cols, title, y_max=8000000):
         chart_cols,
         f"{title}. Peak hospitalizations: {int(peak):,}. Deaths: {int(deaths):,}",
         y_max,
+    )
+
+
+def plot_actuals(model_df, actuals_df, model_cols, title, y_max=8000000):
+
+    combo_df = pd.merge(model_df, actuals_df, how="outer", on="date")
+
+    plot_df(
+        combo_df, model_cols, f"{title}.", y_max,
     )
 
 

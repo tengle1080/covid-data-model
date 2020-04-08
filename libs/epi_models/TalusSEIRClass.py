@@ -19,38 +19,56 @@ _logger = logging.getLogger(__name__)
 class EpiRun:
     def __init__(self, type, model_run):
         self.initlization_time = datetime.datetime.now()
-        self.type = type  # base or intervention
+        self.type = type  # base, past, or intervention
         self.start_date = model_run.start_date
         self.model_run = model_run
 
     def generate_epi_params(self):
-        self.EpiParams = self.EpiParams(self.model_run)
+        self.EpiParameters = self.EpiParams(self.model_run)
 
     def generate_initial_conditions(self):
-        self.InitConditions = self.TimeStep(self.model_run)
+        self.InitConditions = self.TimeStep(self.model_run, self.type)
 
     class TimeStep:
-        def __init__(self, model_run):
+        def __init__(self, model_run, type):
             self.N = model_run.population
 
-            # this is an inital run, will have to build the initial conditions from the
-            # timeseries data
-            self.hospitalized = model_run.past_data.get(key="cases", default=0) / 4
-            self.mild = self.hospitalized / model_run.hospitalization_rate
-            self.icu = (
-                self.hospitalized * model_run.hospitalized_cases_requiring_icu_care
-            )
-            self.asymp = self.mild * (
-                model_run.percent_asymp / 1 - model_run.percent_asymp
-            )
-            self.dead = model_run.past_data.get(key="deaths", default=0)
+            # this is an inital run or a past run, will have to build the initial
+            # conditions from the timeseries data
+            if type == "base":
+                if model_run.model_cases == "divided_into_infected":
+                    cases = model_run.past_data.get(key="cases", default=0)
+                    self.hospitalized = cases * model_run.hospitalization_rate
+                    self.icu = (
+                        self.hospitalized
+                        * model_run.hospitalized_cases_requiring_icu_care
+                    )
+                    self.mild = cases - self.hospitalized - self.icu
+                    self.asymp = self.mild * model_run.percent_asymp
+                    self.dead = model_run.past_data.get(key="deaths", default=0)
+                elif model_run.model_cases == "one_in_4_hospitalized":
+                    self.hospitalized = (
+                        model_run.past_data.get(key="cases", default=0) / 4
+                    )
+                    self.mild = self.hospitalized / model_run.hospitalization_rate
+                    self.icu = (
+                        self.hospitalized
+                        * model_run.hospitalized_cases_requiring_icu_care
+                    )
+                    self.asymp = self.mild * model_run.percent_asymp
+                    self.dead = model_run.past_data.get(key="deaths", default=0)
+            elif type in ("intervention", "past-actual", "past-counterfactual"):
+                # this should be an intervention run, so the initial conditions are more
+                # fleshed out
+                self.mild = model_run.past_data.get(key="infected_a", default=0)
+                self.hospitalized = model_run.past_data.get(key="infected_b", default=0)
+                self.icu = model_run.past_data.get(key="infected_c", default=0)
+                self.asymp = model_run.past_data.get(key="asymp", default=0)
+                self.dead = model_run.past_data.get(key="dead", default=0)
 
             self.exposed = model_run.exposed_infected_ratio * self.mild
-
             self.infected = self.asymp + self.mild + self.hospitalized + self.icu
-
             self.recovered = model_run.past_data.get(key="recovered", default=0)
-
             susceptible = self.N - (self.infected + self.recovered + self.dead)
 
             self.y0 = [
@@ -152,19 +170,60 @@ class EpiRun:
 
             return r0
 
+    def process_actuals(self, actuals):
+
+        if self.model_run.model_cases == "divided_into_infected":
+            actuals.loc[:, "infected_b"] = (
+                actuals["cases"] * self.model_run.hospitalization_rate
+            )
+            actuals.loc[:, "infected_c"] = (
+                actuals["infected_b"]
+                * self.model_run.hospitalized_cases_requiring_icu_care
+            )
+            actuals.loc[:, "infected_a"] = (
+                actuals["cases"] - actuals["infected_b"] - actuals["infected_c"]
+            )
+            actuals.loc[:, "asymp"] = (
+                actuals["infected_a"] * self.model_run.percent_asymp
+            )
+            actuals.loc[:, "dead"] = actuals["deaths"]
+        elif self.model_run.model_cases == "one_in_4_hospitalized":
+            actuals.loc[:, "infected_b"] = actuals["cases"] / 4
+            actuals.loc[:, "infected_a"] = (
+                actuals["infected_b"] / self.model_run.hospitalization_rate
+            )
+            actuals.loc[:, "infected_c"] = (
+                actuals["infected_b"]
+                * self.model_run.hospitalized_cases_requiring_icu_care
+            )
+            actuals.loc[:, "asymp"] = (
+                actuals["infected_a"] * self.model_run.percent_asymp
+            )
+            actuals.loc[:, "dead"] = actuals["deaths"]
+
+        actuals.loc[:, "exposed"] = (
+            self.model_run.exposed_infected_ratio * actuals["infected_a"]
+        )
+
+        match_columns = [
+            "date",
+            "exposed",
+            "infected_a",
+            "infected_b",
+            "infected_c",
+            "recovered",
+            "dead",
+            "asymp",
+        ]
+        return actuals.loc[:, match_columns]
+
     def dataframe_ify(self):
-        """Return human-friendly dataframe of model results.
+        """Generate human-friendly dataframe of model results and combine with past
+        results
 
         Parameters
         ----------
-        data : type
-            Description of parameter `data`.
-        start : type
-            Description of parameter `start`.
-        end : type
-            Description of parameter `end`.
-        steps : type
-            Description of parameter `steps`.
+        self : EpiRun object
 
         Returns
         -------
@@ -202,8 +261,32 @@ class EpiRun:
 
         # drop anything after the end day
         seir_df = seir_df.loc[: self.last_period]
+        seir_df.index.name = "date"
+        seir_df.reset_index(inplace=True)
+
+        # if there is a past run, get that info
+        if self.type == "base":
+            actual_df = self.process_actuals(self.model_run.actuals)
+            actual_df["source"] = "actuals"
+
+            seir_df["source"] = "base run"
+            display_df = actual_df.append(seir_df)
+
+        else:
+            past_run = self.prior_results
+            seir_df["source"] = self.intervention["name"]
+            display_df = past_run.append(seir_df)
 
         self.results_df = seir_df
+
+        display_df["infected"] = (
+            display_df.infected_a
+            + display_df.infected_b
+            + display_df.infected_c
+            + display_df.asymp
+        )
+
+        self.display_df = display_df
 
         return
 
@@ -248,29 +331,30 @@ class EpiRun:
         A = y0[6]
 
         I_all = [I1, I2, I3]
-        I_transmission = np.dot(self.EpiParams.beta[1:4], I_all)
-        I_recovery = np.dot(self.EpiParams.gamma[1:4], I_all)
-        A_transmission = A * self.EpiParams.beta_A
-        A_recovery = A * self.EpiParams.gamma_A
+        I_transmission = np.dot(self.EpiParameters.beta[1:4], I_all)
+        I_recovery = np.dot(self.EpiParameters.gamma[1:4], I_all)
+        A_transmission = A * self.EpiParameters.beta_A
+        A_recovery = A * self.EpiParameters.gamma_A
         all_infected = sum(I_all) + A
+        percent_asymp = self.EpiParameters.f
 
         dE = np.min([(A_transmission + I_transmission) * S, S]) - (
-            self.EpiParams.alpha * E
+            self.EpiParameters.alpha * E
         )  # Exposed
-        dA = ((1 - self.EpiParams.f) * self.EpiParams.alpha * E) - (
-            self.EpiParams.gamma_A * A
+        dA = (percent_asymp * self.EpiParameters.alpha * E) - (
+            self.EpiParameters.gamma_A * A
         )  # asymp
-        dI1 = (self.EpiParams.f * self.EpiParams.alpha * E) - (
-            self.EpiParams.gamma[1] + self.EpiParams.rho[1]
+        dI1 = ((1 - percent_asymp) * self.EpiParameters.alpha * E) - (
+            self.EpiParameters.gamma[1] + self.EpiParameters.rho[1]
         ) * I1  # Ia - Mildly ill
-        dI2 = (self.EpiParams.rho[1] * I1) - (
-            self.EpiParams.gamma[2] + self.EpiParams.rho[2]
+        dI2 = (self.EpiParameters.rho[1] * I1) - (
+            self.EpiParameters.gamma[2] + self.EpiParameters.rho[2]
         ) * I2  # Ib - Hospitalized
-        dI3 = (self.EpiParams.rho[2] * I2) - (
-            (self.EpiParams.gamma[3] + self.EpiParams.mu) * I3
+        dI3 = (self.EpiParameters.rho[2] * I2) - (
+            (self.EpiParameters.gamma[3] + self.EpiParameters.mu) * I3
         )  # Ic - ICU
         dR = np.min([A_recovery + I_recovery, all_infected])  # Recovered
-        dD = self.EpiParams.mu * I3  # Deaths
+        dD = self.EpiParameters.mu * I3  # Deaths
 
         dy = [dE, dI1, dI2, dI3, dR, dD, dA]
         return dy
@@ -301,28 +385,53 @@ class EpiRun:
 
         return
 
+    def epi_report(self):
+        # TODO: blow this out... summary of key assumptions
+        return
+
+    def model_report(self):
+        # TODO: blow this out... summary of key assumptions
+        return
+
+    def param_report(self):
+        model_report = self.model_report()
+        epi_report = self.epi_report()
+
+        return (model_report, epi_report)
+
 
 class Intervention(EpiRun):
     def __init__(self, intervention, model_run):
         # get the base run done so we have a place to start
-        self.type = "intervention"
+        self.type = intervention["type"]
         self.model_run = model_run
         self.intervention = intervention
+        self.prior_results = intervention["prior_results"]
         super(Intervention, self).__init__(self.type, self.model_run)
         self.start_date = intervention["start_date"]
-        self.get_new_init_conditions()
+        if self.type == "past-counterfactual":
+            self.get_init_from_actuals()
+        elif self.type == "intervention":
+            self.get_new_init_conditions()
+
+        # if the type is past-actual, the initial conditions
+        # are already in, copied from the base run
+        elif self.type == "past-actual":
+            self.InitConditions = self.intervention["initial_conditions"]
+
         self.get_new_epi_params()
 
-        self.seir()
-        self.dataframe_ify()
+    def get_init_from_actuals(self):
+        self.model_run.past_data = self.model_run.actuals.loc[
+            (self.model_run.actuals.date == self.start_date), :
+        ].iloc[0]
 
-        ### todo: change params
-        # self.EpiParams = super().EpiParams(model_run)
+        self.InitConditions = self.TimeStep(self.model_run, self.type)
 
     def get_new_init_conditions(self):
         self.model_run.past_data = self.intervention["initial_conditions"]
 
-        self.InitConditions = self.TimeStep(self.model_run)
+        self.InitConditions = self.TimeStep(self.model_run, self.type)
 
     def get_new_epi_params(self):
         for param_name, param_value in self.intervention["new_parameters"].items():
@@ -331,37 +440,7 @@ class Intervention(EpiRun):
             else:
                 setattr(self.model_run, param_name, param_value)
 
-        self.EpiParams = super().EpiParams(self.model_run)
-
-    class TimeStep:
-        def __init__(self, model_run):
-            self.N = model_run.population
-
-            # this should be an intervention run, so the initial conditions are more
-            # fleshed out
-            self.mild = model_run.past_data.get(key="infected_a", default=0)
-            self.hospitalized = model_run.past_data.get(key="infected_b", default=0)
-            self.icu = model_run.past_data.get(key="infected_c", default=0)
-            self.asymp = model_run.past_data.get(key="asymp", default=0)
-            self.dead = model_run.past_data.get(key="dead", default=0)
-
-            self.exposed = model_run.exposed_infected_ratio * self.mild
-
-            self.infected = self.asymp + self.mild + self.hospitalized + self.icu
-
-            self.recovered = model_run.past_data.get(key="recovered", default=0)
-
-            susceptible = self.N - (self.infected + self.recovered + self.dead)
-
-            self.y0 = [
-                int(self.exposed),
-                int(self.mild),
-                int(self.hospitalized),
-                int(self.icu),
-                int(self.recovered),
-                int(self.dead),
-                int(self.asymp),
-            ]
+        self.EpiParameters = self.EpiParams(self.model_run)
 
     def brute_force_r0(self, new_r0):
         """This function will be obsolete when the procedure for introducing
@@ -390,7 +469,7 @@ class Intervention(EpiRun):
         # step = 0.1
         # direction = 1 if change > 0 else -1
 
-        NewEpiParams = self.EpiParams.deepcopy()
+        NewEpiParams = self.EpiParameters.deepcopy()
 
         while round(new_r0, 4) != round(calc_r0, 4):
             NewEpiParams["beta"] = [
