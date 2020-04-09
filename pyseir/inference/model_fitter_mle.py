@@ -6,6 +6,7 @@ import pandas as pd
 from matplotlib import pyplot as plt
 from datetime import datetime, timedelta
 from multiprocessing import Pool
+from backtester import metrics as bt_metrics
 from pyseir.models import suppression_policies
 from pyseir import load_data, OUTPUT_DIR
 from pyseir.models.seir_model import SEIRModel
@@ -161,7 +162,104 @@ def plot_inferred_result(fit_results):
         f'{fit_results["state"]}__{fit_results["county"]}__{fit_results["fips"]}__mle_fit_results.pdf')
     plt.savefig(output_file)
 
+def backtest_data(fit_results):
+    """
+    """
+    fips = fit_results['fips']
+    county_metadata = load_data.load_county_metadata().set_index('fips').loc[fips].to_dict()
+    times, observed_new_cases, observed_new_deaths = load_data.load_new_case_data_by_fips(fips, t0=ref_date)
+    if observed_new_cases.sum() < 5:
+        logging.warning(f"{county_metadata['county']} has fewer than 5 cases. Aborting plot.")
+        return
+    else:
+        logging.info(f"Plotting MLE Fits for {county_metadata['county']}")
 
+    R0, t0, eps = fit_results['R0'], fit_results['t0'], fit_results['eps']
+
+    model = SEIRModel(
+        R0=R0,
+        suppression_policy=suppression_policies.generate_empirical_distancing_policy(t_list, fips, future_suppression=eps),
+        **get_average_SEIR_parameters(fit_results['fips'])
+    )
+    model.run()
+
+    data_dates = [ref_date + timedelta(days=t) for t in times]
+    model_dates = [ref_date + timedelta(days=t + fit_results['t0']) for t in t_list]
+    errors = {}
+    errors["umbrae"] = bt_metrics.umbrae(
+        observed_new_deaths,
+        model.results['direct_deaths_per_day']
+    )
+    errors["umbrae"] = bt_metrics.umbrae(
+        observed_new_cases,
+        model.results['total_new_infections']
+    )
+    errors["gmrae"] = bt_metrics.gmrae(
+        observed_new_deaths,
+        model.results['direct_deaths_per_day']
+    )
+    errors["gmrae"] = bt_metrics.gmrae(
+        observed_new_cases,
+        model.results['total_new_infections']
+    )
+    errors["mase"] = bt_metrics.mase(
+        observed_new_deaths,
+        model.results['direct_deaths_per_day']
+    )
+    errors["mase"] = bt_metrics.mase(
+        observed_new_cases,
+        model.results['total_new_infections']
+    )
+    errors["smape"] = bt_metrics.smape(
+        observed_new_deaths,
+        model.results['direct_deaths_per_day']
+    )
+    errors["smape"] = bt_metrics.smape(
+        observed_new_cases,
+        model.results['total_new_infections']
+    )
+    errors["median_rae"] = bt_metrics.median_rae(
+        observed_new_deaths,
+        model.results['direct_deaths_per_day']
+    )
+    errors["median_rae"] = bt_metrics.median_rae(
+        observed_new_cases,
+        model.results['total_new_infections']
+    )
+    errors["mean_rae"] = bt_metrics.mean_rae(
+        observed_new_deaths,
+        model.results['direct_deaths_per_day']
+    )
+    errors["mean_rae"] = bt_metrics.mean_rae(
+        observed_new_cases,
+        model.results['total_new_infections']
+    )
+    errors["rmse"] = bt_metrics.rmse(
+        observed_new_deaths,
+        model.results['direct_deaths_per_day']
+    )
+    errors["rmse"] = bt_metrics.rmse(
+        observed_new_cases,
+        model.results['total_new_infections']
+    )
+    errors["mape"] = bt_metrics.mape(
+        observed_new_deaths,
+        model.results['direct_deaths_per_day']
+    )
+    errors["mape"] = bt_metrics.mape(
+        observed_new_cases,
+        model.results['total_new_infections']
+    )
+    errors["mbrae"] = bt_metrics.mbrae(
+        observed_new_deaths,
+        model.results['direct_deaths_per_day']
+    )
+    errors["mbrae"] = bt_metrics.mbrae(
+        observed_new_cases,
+        model.results['total_new_infections']
+    )
+    return errors
+    
 def run_state(state):
     """
     Run the fitter for each county in a state.
