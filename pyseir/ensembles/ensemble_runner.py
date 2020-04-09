@@ -8,6 +8,7 @@ import us
 import simplejson as json
 from enum import Enum
 import copy
+import pandas as pd
 from collections import defaultdict
 from pyseir.models.seir_model import SEIRModel
 from pyseir.parameters.parameter_ensemble_generator import ParameterEnsembleGenerator
@@ -144,8 +145,9 @@ class EnsembleRunner:
 
         self.suppression_policies = None
         self.override_params = None
-        self.init_run_mode()
+        self.backfill_values = None
 
+        self.init_run_mode()
         self.all_outputs = {}
 
     def get_initial_hospitalizations(self, use_cases=False):
@@ -167,13 +169,23 @@ class EnsembleRunner:
         hospitalization_data = CovidTrackingDataSource.local()\
             .timeseries()\
             .get_subset(self.agg_level, country='USA', state=self.state_abbr)\
-            .get_data(state=self.state_abbr, country='USA', fips=fips)\
-            .sort_values('date')
+            .get_data(state=self.state_abbr, country='USA', fips=fips)
+
+        self.backfill_values = pd.DataFrame()
 
         # If there are enough hospitalizations, use those to define initial conditions.
         if not use_cases and len(hospitalization_data) > 0 and self.state_abbr not in FAULTY_HOSPITAL_DATA_STATES:
-            latest_date = hospitalization_data.iloc[-1]['date'].date()
-            n_current = hospitalization_data.iloc[-1]['current_hospitalized']
+
+            latest_date = min(self.covid_data.date.max().date(), hospitalization_data.date.max())
+            latest_covid_data = self.covid_data[(self.covid_data.date.dt.date == latest_date)].iloc[0]
+            backfill_covid_data = self.covid_data[(self.covid_data.date.dt.date < latest_date)]
+            latest_hospitalization_data = hospitalization_data[hospitalization_data.date.dt.date == latest_date].iloc[0]
+
+            self.backfill_values['date'] = backfill_covid_data.date
+            self.backfill_values['deaths'] = backfill_covid_data.deaths
+
+            n_current = latest_hospitalization_data['current_hospitalized']
+
             if n_current > self.min_hospitalization_threshold and not np.isnan(n_current):
                 hospitalizations_total = n_current
 
@@ -181,13 +193,18 @@ class EnsembleRunner:
             # in cases where cumulative is not available. Punting on this until
             # post-release.
             else:
-                hospitalizations_total = hospitalization_data.iloc[-1]['cumulative_hospitalized']
+                hospitalizations_total = hospitalization_data['cumulative_hospitalized']
+
+            self.backfill_values['total_hospitalizations'] = backfill_covid_data.cases / (latest_covid_data['cases'] / hospitalizations_total)
 
         # Fallback to case data if not.
         else:
             latest_date = self.covid_data.date.max()
             hospitalizations_total = self.covid_data.cases.max() * self.hospitalization_to_confirmed_case_ratio
+            self.backfill_values['total_hospitalizations'] = self.covid_data.cases / (self.covid_data.cases.max() / hospitalizations_total)
+
         return latest_date, hospitalizations_total
+
 
     def init_run_mode(self):
         """
@@ -227,6 +244,7 @@ class EnsembleRunner:
             if len(self.covid_data) > 0 and self.covid_data.cases.max() > 0:
                 self.t0 = self.covid_data.date.max()
                 self.t0, hospitalizations_total = self.get_initial_hospitalizations()
+                self.backfill_values['total_infections'] = self.backfill_values['total_hospitalizations'] / self.override_params['hospitalization_rate_general']
 
                 self.override_params['HGen_initial'] = hospitalizations_total * (1 - self.override_params['hospitalization_rate_icu'] / self.override_params['hospitalization_rate_general'])
                 self.override_params['HICU_initial'] = hospitalizations_total * self.override_params['hospitalization_rate_icu']/ self.override_params['hospitalization_rate_general']
@@ -277,6 +295,7 @@ class EnsembleRunner:
             if len(self.covid_data) > 0 and self.covid_data.cases.max() > 0:
                 self.t0 = self.covid_data.date.max()
                 self.t0, hospitalizations_total = self.get_initial_hospitalizations()
+                self.backfill_values['total_infections'] = self.backfill_values['total_hospitalizations'] / self.override_params['hospitalization_rate_general']
 
                 self.override_params['HGen_initial'] = hospitalizations_total * (1 - self.override_params['hospitalization_rate_icu'])
                 self.override_params['HICU_initial'] = hospitalizations_total * self.override_params['hospitalization_rate_icu']
@@ -352,6 +371,8 @@ class EnsembleRunner:
                                   summary=self.summary)
             report.generate_and_save()
 
+        if self.backfill_values is not None:
+            self.all_outputs['backfill'] = self.backfill_values
         with open(self.output_file_data, 'w') as f:
             json.dump(self.all_outputs, f)
 

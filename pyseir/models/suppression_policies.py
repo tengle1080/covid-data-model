@@ -176,7 +176,6 @@ def generate_empirical_distancing_policy(t_list, fips, future_suppression):
     suppression_model: callable
         suppression_model(t) returns the current suppression model at time t.
     """
-
     t0 = fit_results.load_t0(fips)
     rho = []
 

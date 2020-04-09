@@ -47,56 +47,56 @@ class WebUIDataAdaptorV1:
         self.state_timeseries = jhu_local.timeseries().state_data
         self.state_timeseries['date'] = self.state_timeseries['date'].dt.normalize()
 
-    def backfill_output_model_fips(self, fips, t0, final_beds, output_model):
-        """
-        Add backfilled hospitalization, case, amd deaths data.
-
-        Parameters
-        ----------
-        fips: str
-            State or county fips code.
-        t0: datetime
-            Start time for the simulation.
-        final_beds: total number of beds.
-            Number of beds after scaling.
-        output_model: dict
-            Output model to impute.
-
-        Returns
-        -------
-        backfill: str
-            Backfill dataframe.
-        """
-        backfill_to_date = date(2020, 3, 3)   # @TODO: Parameterize
-        hospitalization_rate = 0.073          # @TODO: Parameterize
-        intervals_to_backfill = math.ceil((t0.date() - backfill_to_date).days / self.output_interval_days)
-        backfill_offsets = range(-intervals_to_backfill * self.output_interval_days, 0, self.output_interval_days)
-
-        backfill = pd.DataFrame()
-        backfill['days'] = backfill_offsets
-        backfill['date'] = [(t0 + timedelta(days=t)) for t in backfill_offsets]
-        backfill['date'] = backfill['date'].dt.normalize()
-        backfill['beds'] = final_beds
-
-        if len(fips) == 5:
-            actual_timeseries = self.county_timeseries[(self.county_timeseries['fips'] == fips)]
-        else:
-            actual_timeseries = self.state_timeseries[(self.state_timeseries['state'] == self.state_abbreviation)]
-
-        backfill = pd.merge(backfill, actual_timeseries[['date', 'cases', 'deaths']], on='date', how='left')
-
-        # TODO this is fragile because of the backfill hospitalization date
-        #      alignment and/or 4 day discontinuity. Luckily it is also invisible on non-log-scales.
-        # Account for two cases
-        #   (i) hospital admissions available.
-        #   (ii) Not available, so cases are imputed...
-        # We can just read the initial conditions infected and hospitalized to rescale the case data to match.
-        backfill['all_infected'] =( output_model['all_infected'][0] * backfill['cases'] / backfill['cases'].max()).fillna(0)
-        backfill['all_hospitalized'] = np.multiply(backfill['all_infected'], hospitalization_rate).fillna(0)
-        backfill['dead'] = backfill['deaths'].fillna(0)
-        backfill['date'] = backfill['date'].dt.strftime('%m/%d/%y')
-
-        return backfill
+    # def backfill_output_model_fips(self, fips, t0, final_beds, output_model):
+    #     """
+    #     Add backfilled hospitalization, case, amd deaths data.
+    #
+    #     Parameters
+    #     ----------
+    #     fips: str
+    #         State or county fips code.
+    #     t0: datetime
+    #         Start time for the simulation.
+    #     final_beds: total number of beds.
+    #         Number of beds after scaling.
+    #     output_model: dict
+    #         Output model to impute.
+    #
+    #     Returns
+    #     -------
+    #     backfill: str
+    #         Backfill dataframe.
+    #     """
+    #     backfill_to_date = date(2020, 3, 3)   # @TODO: Parameterize
+    #     hospitalization_rate = 0.073          # @TODO: Parameterize
+    #     intervals_to_backfill = math.ceil((t0.date() - backfill_to_date).days / self.output_interval_days)
+    #     backfill_offsets = range(-intervals_to_backfill * self.output_interval_days, 0, self.output_interval_days)
+    #
+    #     backfill = pd.DataFrame()
+    #     backfill['days'] = backfill_offsets
+    #     backfill['date'] = [(t0 + timedelta(days=t)) for t in backfill_offsets]
+    #     backfill['date'] = backfill['date'].dt.normalize()
+    #     backfill['beds'] = final_beds
+    #
+    #     if len(fips) == 5:
+    #         actual_timeseries = self.county_timeseries[(self.county_timeseries['fips'] == fips)]
+    #     else:
+    #         actual_timeseries = self.state_timeseries[(self.state_timeseries['state'] == self.state_abbreviation)]
+    #
+    #     backfill = pd.merge(backfill, actual_timeseries[['date', 'cases', 'deaths']], on='date', how='left')
+    #
+    #     # TODO this is fragile because of the backfill hospitalization date
+    #     #      alignment and/or 4 day discontinuity. Luckily it is also invisible on non-log-scales.
+    #     # Account for two cases
+    #     #   (i) hospital admissions available.
+    #     #   (ii) Not available, so cases are imputed...
+    #     # We can just read the initial conditions infected and hospitalized to rescale the case data to match.
+    #     backfill['all_infected'] =( output_model['all_infected'][0] * backfill['cases'] / backfill['cases'].max()).fillna(0)
+    #     backfill['all_hospitalized'] = np.multiply(backfill['all_infected'], hospitalization_rate).fillna(0)
+    #     backfill['dead'] = backfill['deaths'].fillna(0)
+    #     backfill['date'] = backfill['date'].dt.strftime('%m/%d/%y')
+    #
+    #     return backfill
 
     def map_fips(self, fips):
         """
@@ -154,8 +154,11 @@ class WebUIDataAdaptorV1:
             final_beds = np.mean(output_for_policy['HGen']['capacity']) + np.mean(output_for_policy['HICU']['capacity'])
             output_model['beds'] = final_beds
 
-            backfill = self.backfill_output_model_fips(fips, t0, final_beds, output_model)
-            output_model = pd.concat([backfill, output_model])[output_model.columns].reset_index(drop=True)
+            # backfill = self.backfill_output_model_fips(fips, t0, final_beds, output_model)
+            print(pyseir_outputs['backfill'])
+
+
+            #output_model = pd.concat([backfill, output_model])[output_model.columns].reset_index(drop=True)
 
             # Truncate date range of output.
             output_dates = pd.to_datetime(output_model['date'])
