@@ -52,8 +52,12 @@ class ModelFitter:
         relative to the max. The overall scale here doesn't influence the max
         likelihood fit, but it does influence the prior blending and error
         estimates.  0.5 = 50% error. Best to be conservatively high.
+    use_state_result_for_county: True
+        Does nothing for state level fips. If True and FIPS corresponds to a
+        county, we apply the state fit results and fix all parameters to their
+        state inferred values other than t0. # TODO: After playing around are
+        their other params to loosen?
     """
-
     DEFAULT_FIT_PARAMS = dict(
         R0=3.4, limit_R0=[2, 4.5], error_R0=.05,
         log10_I_initial=2, limit_log10_I_initial=[0, 5],
@@ -104,7 +108,8 @@ class ModelFitter:
                  n_years=1,
                  cases_to_deaths_err_factor=.5,
                  hospital_to_deaths_err_factor=.5,
-                 percent_error_on_max_observation=0.5):
+                 percent_error_on_max_observation=0.5,
+                 use_state_result_for_county=True):
 
         self.fips = fips
         self.ref_date = ref_date
@@ -144,29 +149,43 @@ class ModelFitter:
                 load_data.load_hospitalization_data(self.fips, t0=self.ref_date)
 
         self.cases_stdev, self.hosp_stdev, self.deaths_stdev = self.calculate_observation_errors()
-
-        self.fit_params = self.DEFAULT_FIT_PARAMS
-        # Update any state specific params.
-        for k, v in self.PARAM_SETS.items():
-            if self.state_obj.abbr in k:
-                self.fit_params.update(v)
-
-        self.fit_params['fix_hosp_fraction'] = self.hospitalizations is None
-        if self.hospitalizations is None:
-            self.fit_params['hosp_fraction'] = 1
-
         self.model_fit_keys = ['R0', 'eps', 't_break', 'log10_I_initial']
+
+        self.init_optimizer_parameters()
 
         self.SEIR_kwargs = self.get_average_seir_parameters()
         self.fit_results = None
         self.mle_model = None
-
         self.chi2_deaths = None
         self.chi2_cases = None
         self.chi2_hosp = None
         self.dof_deaths = None
         self.dof_cases = None
         self.dof_hosp = None
+
+    def init_optimizer_parameters(self):
+        """
+
+        Initialize the optimizer parameters. For states, we apply some initial
+        conditions/range restrictions based on the state to assist the fitter
+        with better initial guesses. For counties, this projects some of the
+        parameters from the state level fit down to counties.
+        """
+        self.fit_params = self.DEFAULT_FIT_PARAMS
+
+        # Apply state specific parameters to start.
+        for k, v in self.PARAM_SETS.items():
+            if self.state_obj.abbr in k:
+                self.fit_params.update(v)
+
+        # Don't fit the hosp parameters if there is no data.
+        self.fit_params['fix_hosp_fraction'] = self.hospitalizations is None
+        if self.hospitalizations is None:
+            self.fit_params['hosp_fraction'] = 1
+
+        # If we are looking at counties, fix certain params to the state level.
+        if self.agg_level is AggregationLevel.COUNTY:
+            pass
 
     def get_average_seir_parameters(self):
         """
