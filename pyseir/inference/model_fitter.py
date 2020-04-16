@@ -11,8 +11,9 @@ from matplotlib import pyplot as plt
 from datetime import datetime, timedelta
 from multiprocessing import Pool
 from pyseir.models import suppression_policies
-from pyseir import load_data, OUTPUT_DIR
+from pyseir import load_data
 from pyseir.models.seir_model import SEIRModel
+from pyseir.inference import fit_results
 from libs.datasets.dataset_utils import AggregationLevel
 from pyseir.parameters.parameter_ensemble_generator import ParameterEnsembleGenerator
 from pyseir.load_data import HospitalizationDataType
@@ -60,8 +61,7 @@ class ModelFitter:
     """
     DEFAULT_FIT_PARAMS = dict(
         R0=3.4, limit_R0=[2, 4.5], error_R0=.05,
-        log10_I_initial=2, limit_log10_I_initial=[0, 5],
-        error_log10_I_initial=.2,
+        log10_I_initial=2, limit_log10_I_initial=[0, 5], error_log10_I_initial=.2,
         t0=60, limit_t0=[10, 80], error_t0=1.0,
         eps=.4, limit_eps=[.15, 2], error_eps=.005,
         t_break=20, limit_t_break=[5, 40], error_t_break=1,
@@ -70,6 +70,9 @@ class ModelFitter:
         # Let's not fit this to start...
         errordef=.5
     )
+
+    MODEL_FIT_KEYS = ['R0', 'eps', 't_break', 'log10_I_initial']
+    NON_MODEL_FIT_KEYS = ['t0', 'test_fraction', 'hosp_fraction']
 
     PARAM_SETS = {
         ('KY', 'KS', 'ID', 'NE', 'VA', 'RI'):  dict(
@@ -119,6 +122,7 @@ class ModelFitter:
         self.hospital_to_deaths_err_factor = hospital_to_deaths_err_factor
         self.percent_error_on_max_observation = percent_error_on_max_observation
         self.t0_guess = 60
+        self.use_state_result_for_county = use_state_result_for_county
 
         if len(fips) == 2:  # State FIPS are 2 digits
             self.agg_level = AggregationLevel.STATE
@@ -149,7 +153,6 @@ class ModelFitter:
                 load_data.load_hospitalization_data(self.fips, t0=self.ref_date)
 
         self.cases_stdev, self.hosp_stdev, self.deaths_stdev = self.calculate_observation_errors()
-        self.model_fit_keys = ['R0', 'eps', 't_break', 'log10_I_initial']
 
         self.init_optimizer_parameters()
 
@@ -165,7 +168,6 @@ class ModelFitter:
 
     def init_optimizer_parameters(self):
         """
-
         Initialize the optimizer parameters. For states, we apply some initial
         conditions/range restrictions based on the state to assist the fitter
         with better initial guesses. For counties, this projects some of the
@@ -184,8 +186,19 @@ class ModelFitter:
             self.fit_params['hosp_fraction'] = 1
 
         # If we are looking at counties, fix certain params to the state level.
-        if self.agg_level is AggregationLevel.COUNTY:
-            pass
+        if self.agg_level is AggregationLevel.COUNTY and self.use_state_result_for_county:
+            state_fit_results = fit_results.load_inference_result(self.state_obj.fips)
+
+            for key in self.MODEL_FIT_KEYS + self.NON_MODEL_FIT_KEYS:
+                self.fit_params[key] = state_fit_results[key]
+                self.fit_params['fix_' + key] = True
+
+            self.fit_params['log10_I_initial'] = 0
+            self.fit_params['fix_log10_I_initial'] = False
+
+            self.fit_params['limit_t0'] = [state_fit_results['t0'] - 20,
+                                           state_fit_results['t0'] + 20]
+            self.fit_params['fix_t0'] = False
 
     def get_average_seir_parameters(self):
         """
@@ -353,7 +366,7 @@ class ModelFitter:
             Chi square of fitting model to observed cases and deaths.
         """
         l = locals()
-        model_kwargs = {k: l[k] for k in self.model_fit_keys}
+        model_kwargs = {k: l[k] for k in self.MODEL_FIT_KEYS}
         model = self.run_model(**model_kwargs)
 
         # -----------------------------------
@@ -494,7 +507,7 @@ class ModelFitter:
             logging.info(f'Fit Results for {self.display_name} \n {param_state}')
 
         logging.info(f'Complete fit results for {self.display_name} \n {pformat(self.fit_results)}')
-        self.mle_model = self.run_model(**{k: self.fit_results[k] for k in self.model_fit_keys})
+        self.mle_model = self.run_model(**{k: self.fit_results[k] for k in self.MODEL_FIT_KEYS})
 
     def plot_fitting_results(self):
         """
