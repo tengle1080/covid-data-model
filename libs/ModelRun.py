@@ -163,6 +163,58 @@ class ModelRun:
 
         self.interventions = {}
 
+    class SnapShot:
+        def __init__(self, model_run, type):
+            self.N = model_run.population
+
+            # this is an inital run or a past run, will have to build the initial
+            # conditions from the timeseries data
+            if type == "base":
+                if model_run.model_cases == "divided_into_infected":
+                    cases = model_run.past_data.get(key="cases", default=0)
+                    self.hospitalized = cases * model_run.hospitalization_rate
+                    self.icu = (
+                        self.hospitalized
+                        * model_run.hospitalized_cases_requiring_icu_care
+                    )
+                    self.mild = cases - self.hospitalized - self.icu
+                    self.asymp = self.mild * model_run.percent_asymp
+                    self.dead = model_run.past_data.get(key="deaths", default=0)
+                elif model_run.model_cases == "one_in_4_hospitalized":
+                    self.hospitalized = (
+                        model_run.past_data.get(key="cases", default=0) / 4
+                    )
+                    self.mild = self.hospitalized / model_run.hospitalization_rate
+                    self.icu = (
+                        self.hospitalized
+                        * model_run.hospitalized_cases_requiring_icu_care
+                    )
+                    self.asymp = self.mild * model_run.percent_asymp
+                    self.dead = model_run.past_data.get(key="deaths", default=0)
+            elif type in ("intervention", "past-actual", "past-counterfactual"):
+                # this should be an intervention run, so the initial conditions are more
+                # fleshed out
+                self.mild = model_run.past_data.get(key="infected_a", default=0)
+                self.hospitalized = model_run.past_data.get(key="infected_b", default=0)
+                self.icu = model_run.past_data.get(key="infected_c", default=0)
+                self.asymp = model_run.past_data.get(key="asymp", default=0)
+                self.dead = model_run.past_data.get(key="dead", default=0)
+
+            self.exposed = model_run.exposed_infected_ratio * self.mild
+            self.infected = self.asymp + self.mild + self.hospitalized + self.icu
+            self.recovered = model_run.past_data.get(key="recovered", default=0)
+            susceptible = self.N - (self.infected + self.recovered + self.dead)
+
+            self.y0 = [
+                int(self.exposed),
+                int(self.mild),
+                int(self.hospitalized),
+                int(self.icu),
+                int(self.recovered),
+                int(self.dead),
+                int(self.asymp),
+            ]
+
     # use only if you're doing a stand-alone run, if you're doing a lot of regions
     # then grab all the data and just call get_data_subset for each run
     def get_data(self, min_date):
@@ -200,6 +252,53 @@ class ModelRun:
             self.start_date = self.override_model_start
 
         return
+
+    def process_actuals(self, actuals):
+
+        if self.model_run.model_cases == "divided_into_infected":
+            actuals.loc[:, "infected_b"] = (
+                actuals["cases"] * self.model_run.hospitalization_rate
+            )
+            actuals.loc[:, "infected_c"] = (
+                actuals["infected_b"]
+                * self.model_run.hospitalized_cases_requiring_icu_care
+            )
+            actuals.loc[:, "infected_a"] = (
+                actuals["cases"] - actuals["infected_b"] - actuals["infected_c"]
+            )
+            actuals.loc[:, "asymp"] = (
+                actuals["infected_a"] * self.model_run.percent_asymp
+            )
+            actuals.loc[:, "dead"] = actuals["deaths"]
+        elif self.model_run.model_cases == "one_in_4_hospitalized":
+            actuals.loc[:, "infected_b"] = actuals["cases"] / 4
+            actuals.loc[:, "infected_a"] = (
+                actuals["infected_b"] / self.model_run.hospitalization_rate
+            )
+            actuals.loc[:, "infected_c"] = (
+                actuals["infected_b"]
+                * self.model_run.hospitalized_cases_requiring_icu_care
+            )
+            actuals.loc[:, "asymp"] = (
+                actuals["infected_a"] * self.model_run.percent_asymp
+            )
+            actuals.loc[:, "dead"] = actuals["deaths"]
+
+        actuals.loc[:, "exposed"] = (
+            self.model_run.exposed_infected_ratio * actuals["infected_a"]
+        )
+
+        match_columns = [
+            "date",
+            "exposed",
+            "infected_a",
+            "infected_b",
+            "infected_c",
+            "recovered",
+            "dead",
+            "asymp",
+        ]
+        return actuals.loc[:, match_columns]
 
     def get_data_subset(
         self, beds_data, population_data, timeseries, min_date,
@@ -263,11 +362,11 @@ class ModelRun:
         elif epi_model_type == "asymp":
             self.model_type = "asymp"
 
-            from libs.epi_models.TalusSEIRClass import EpiRun
+            from libs.epi_models.TalusSEIRClass import TalusSEIR as EpiRun
 
         self.epi_run = EpiRun("base", self)
         self.epi_run.generate_epi_params()
-        self.epi_run.generate_initial_conditions()
+        self.epi_run.InitConditions = self.SnapShot(self, "base")
 
     def reload_params(self):
         self.results_list = []
@@ -280,8 +379,9 @@ class ModelRun:
 
         self.past_data = self.default_past_data
 
+        self.epi_run.InitConditions = self.SnapShot(self, "base")
+
         self.epi_run.generate_epi_params()
-        self.epi_run.generate_initial_conditions()
 
     def run(self):
         self.epi_run.seir()
@@ -296,34 +396,14 @@ class ModelRun:
         elif self.model_type == "asymp":
             from libs.epi_models.TalusSEIRClass import Intervention
 
-        prior_run = self.results_list[-1].copy()
-
-        # if it's a future intervention, use the projections from that date
-        if intervention["type"] == "intervention":
-            intervention["initial_conditions"] = prior_run.loc[
-                (prior_run["date"] == intervention["start_date"])
-            ].iloc[0]
-
-        # if it's a past intervention that actually took place, we start from the
-        # same initial conditions as the run
-        elif intervention["type"] == "past-actual":
-            intervention["initial_conditions"] = self.epi_run.InitConditions
-        # if it's a past intervention that did not take place, start from the
-        # best date we have on the day of that intervention
-        elif intervention["type"] == "past-counterfactual":
-            intervention["initial_conditions"] = self.actuals[
-                (self.actuals.date == intervention["start_date"])
-            ].iloc[0]
-
-        prior_run = prior_run.loc[(prior_run["date"] < intervention["start_date"]), :]
-
-        intervention["prior_results"] = prior_run
-
         intervention_name = f"intervention_{self.state}_{intervention['name']}"
 
         intervention["system_name"] = intervention_name
 
-        self.interventions[intervention_name] = Intervention(intervention, self)
+        int_object = Intervention(intervention, self)
+        int_object.InitConditions = self.SnapShot(self, intervention["type"])
+
+        self.interventions[intervention_name] = int_object
 
     def run_all_interventions(self):
 
@@ -337,12 +417,40 @@ class ModelRun:
         for intervention in sorted_interventions:
             self.run_intervention(intervention.intervention["system_name"])
 
+    def get_prior_run(self, name):
+        prior_run = self.results_list[-1].copy()
+
+        print(
+            prior_run.loc[
+                prior_run["date"] == self.interventions[name].intervention_start_date
+            ]
+        )
+
+        return prior_run
+
     def run_intervention(self, name):
+        # set the initial conditions based on the prior run
+        self.interventions[name].set_prior_run(self.get_prior_run(name))
+
+        self.past_data = self.interventions[name].initial_conditions
+
+        self.interventions[name].load_epi()
+        self.interventions[name].InitConditions = self.SnapShot(
+            self, self.interventions[name].type
+        )
 
         self.interventions[name].seir()
         self.interventions[name].dataframe_ify()
 
+        # print('prior run value counts:')
+        # print(self.interventions[name].display_df.source.value_counts())
+
         self.results_list.append(self.interventions[name].display_df.copy())
+
+        # print('value_counts for all results')
+        # for i, results in enumerate(self.results_list):
+        #    print(f'item {i} in list')
+        #    print(results.source.value_counts())
 
     def drop_interventions(self):
         self.interventions = {}
