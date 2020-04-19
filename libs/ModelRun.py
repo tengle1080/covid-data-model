@@ -420,12 +420,6 @@ class ModelRun:
     def get_prior_run(self, name):
         prior_run = self.results_list[-1].copy()
 
-        print(
-            prior_run.loc[
-                prior_run["date"] == self.interventions[name].intervention_start_date
-            ]
-        )
-
         return prior_run
 
     def run_intervention(self, name):
@@ -442,50 +436,94 @@ class ModelRun:
         self.interventions[name].seir()
         self.interventions[name].dataframe_ify()
 
-        # print('prior run value counts:')
-        # print(self.interventions[name].display_df.source.value_counts())
-
         self.results_list.append(self.interventions[name].display_df.copy())
-
-        # print('value_counts for all results')
-        # for i, results in enumerate(self.results_list):
-        #    print(f'item {i} in list')
-        #    print(results.source.value_counts())
 
     def drop_interventions(self):
         self.interventions = {}
         self.run()
 
 
-def plot_df(df_to_plot, cols, title="", y_max=8000000):
+col_names = {
+    'infected_a': 'Infected - Mild',
+    'infected_b': 'Infected - Hospitalized',
+    'infected_c': 'Infected - ICU',
+    'dead': 'Dead',
+    'asymp': 'Asymptomatic',
+    'exposed': 'Exposed'
+}
+
+def plot_df(df_to_plot, cols, line_day=None, interventions=None, title="", y_max=8000000):
     cols.append("date")
+    cols.remove("R effective")
+
+    r_effective_df = df_to_plot.loc[:, ["date", "R effective"]]
+    min_date = r_effective_df["date"].min()
+    max_date = r_effective_df["date"].max()
 
     df_to_plot = df_to_plot.loc[:, cols]
 
-    line_day = datetime.datetime.now() - datetime.timedelta(days=2)
 
     x_dates = df_to_plot["date"].dt.strftime("%Y-%m-%d").sort_values().unique()
 
     df_to_plot.set_index("date", inplace=True)
 
+    df_to_plot.columns = [col_names[col] for col in df_to_plot.columns]
+
     stacked = df_to_plot.stack().reset_index()
 
     stacked.columns = ["date", "Population", "Number of people"]
 
-    plt.figure(figsize=(15, 8))
+    # make the population range into the max + 10%
+    y_max = stacked["Number of people"].max() * 1.1
 
-    plt.axvline(line_day, 0, y_max, linestyle="--")
-    plt.ylim(0, y_max)
+    gridkw = dict(height_ratios=[1, 5])
+    fig, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw=gridkw, figsize=(15, 11))
 
+    if line_day is None:
+        line_day = datetime.datetime.now() - datetime.timedelta(days=2)
+
+    print(line_day)
+
+    ax2.axvline(line_day, 0, y_max, linestyle="--", color="darkblue")
+    trans = ax2.get_xaxis_transform()
+    plt.text(
+        line_day + datetime.timedelta(days=2),
+        0.95,
+        'latest data',
+        transform=trans,
+    )
+
+    ax2.set_ylim([0, y_max])
     plt.title(title)
 
-    df_plt = sb.lineplot(x="date", y="Number of people", hue="Population", data=stacked)
+    ax1.set_ylim([0, 4])
+    ax1.hlines(1, min_date, max_date, linestyles="dashed")
+
+    if interventions is not None:
+        line_list = []
+        for intervention in interventions:
+            ax2.axvline(
+                intervention["intervention_start_date"],
+                0,
+                y_max,
+                color="dimgrey",
+                linestyle="--",
+            )
+            plt.text(
+                intervention["intervention_start_date"] + datetime.timedelta(days=2),
+                0.9,
+                intervention["name"],
+                transform=trans,
+            )
+
+    sb.lineplot(x="date", y="R effective", data=r_effective_df, ax=ax1)
+    sb.lineplot(x="date", y="Number of people", hue="Population", data=stacked, ax=ax2)
     # df_plt.set_xticklabels(labels=x_dates, rotation=45, ha='right')
 
-    return df_plt
+    return plt
 
 
-def prep_plot(prep_df, chart_cols, title, y_max=8000000):
+def prep_plot(prep_df, chart_cols, line_day=None, interventions=None, title="", y_max=8000000):
     prep_df["date"] = pd.to_datetime(prep_df["date"])
 
     first_case_date = prep_df.loc[(prep_df.infected > 0), "date"].min()
@@ -519,6 +557,8 @@ def prep_plot(prep_df, chart_cols, title, y_max=8000000):
     plot_df(
         prep_df,
         chart_cols,
+        line_day,
+        interventions,
         f"{title}. Peak hospitalizations: {int(peak):,}. Deaths: {int(deaths):,}",
         y_max,
     )

@@ -368,9 +368,10 @@ class Intervention(TalusSEIR):
         self.type = intervention["type"]
         self.model_run = model_run
         self.intervention = intervention
-        self.intervention_start_date = intervention["intervention_start_date"]
-
-        print(self.intervention_start_date)
+        if self.type == "past-actual":
+            self.intervention_start_date = intervention["start_date"]
+        else:
+            self.intervention_start_date = intervention["intervention_start_date"]
 
     def load_epi(self):
         super(Intervention, self).__init__(self.type, self.model_run)
@@ -394,6 +395,8 @@ class Intervention(TalusSEIR):
             self.initial_conditions = prior_run.loc[
                 (prior_run["date"] == self.intervention_start_date)
             ].iloc[0]
+
+            print(self.initial_conditions)
 
             self.prior_results = prior_run
 
