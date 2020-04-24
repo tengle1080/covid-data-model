@@ -101,7 +101,7 @@ def _generate_state_reports(state=None):
             _generate_state_reports(state_name)
 
 
-def _map_outputs(state=None, output_interval_days=4, states_only=False,
+def _map_outputs(state=None, output_interval_days=1, states_only=False,
                  output_dir=None, run_mode='default'):
     output_interval_days = int(output_interval_days)
     _cache_global_datasets()
