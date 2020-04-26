@@ -6,6 +6,7 @@ infectious compartment (A).
 # standard modules
 import datetime
 import logging
+import math
 from copy import deepcopy
 
 # 3rd party modules
@@ -84,6 +85,16 @@ class TalusSEIR:
             # "gamma": L(gamma_0, gamma_1, gamma_2, gamma_3, A = 0),
             self.rho = [self.rho_0, self.rho_1, self.rho_2]
             self.f = model_run.percent_asymp
+
+            # these are used to get the growth-rate-base R estimation
+            # Serial interval =[Incubation Period]+1/2[Duration of mild infection]
+            self.serial_interval = model_run.presymptomatic_period + (
+                model_run.duration_mild_infections / 2
+            )
+            # f = Ratio of mean infectious period to mean serial interval
+            self.f_ratio = (
+                model_run.duration_mild_infections / 2
+            ) / self.serial_interval
 
         # TODO update to match latest model:
         # R0 = N*((1-f)*BA/gA + f*((B1/(p1+g1))+(p1/(p1+g1))*(B2/(p2+g2)+ (p2/(p2+g2))*(B3/(m+g3)))))
@@ -180,7 +191,7 @@ class TalusSEIR:
         if self.type == "base":
             run_start_date = self.start_date
         else:
-            run_start_date = self.intervention_start_date
+            run_start_date = self.model_start_date
 
         self.last_period = run_start_date + datetime.timedelta(days=(self.steps - 1))
 
@@ -215,7 +226,9 @@ class TalusSEIR:
         seir_df.index.name = "date"
         seir_df.reset_index(inplace=True)
 
-        seir_df["R effective"] = self.EpiParameters.generate_r0()
+        r_effective = self.EpiParameters.generate_r0()
+
+        seir_df["R effective"] = r_effective
 
         # if there is a past run, get that info
         if self.type == "base":
@@ -234,6 +247,12 @@ class TalusSEIR:
                 (self.prior_results["date"] < run_start_date)
             ]
 
+            if self.type == "past-actual":
+                intervention_start_date = self.intervention["intervention_start_date"]
+                past_run.loc[
+                    (past_run["date"] >= intervention_start_date), "R effective"
+                ] = r_effective
+
             seir_df["source"] = self.intervention["name"]
 
             display_df = past_run.append(seir_df)
@@ -246,6 +265,26 @@ class TalusSEIR:
             + display_df.infected_c
             + display_df.asymp
         )
+
+        # pct_change is really lumpy, get rolling 7 days
+        display_df["pct_change"] = display_df.loc[:, "infected_a"].pct_change().rolling(7).mean()
+        display_df["doubling_time"] = math.log(2) / display_df["pct_change"]
+
+        # estimated R from growth rate
+        # Serial interval =[Incubation Period]+1/2[Duration of mild infection]
+        # f = Ration of mean infectious period to mean serial interval
+        def estimateR(growth_rate):
+            return (
+                1
+                + (self.EpiParameters.serial_interval * growth_rate)
+                + (
+                    self.EpiParameters.f_ratio
+                    * (1 - self.EpiParameters.f_ratio)
+                    * ((self.EpiParameters.serial_interval * growth_rate) ** 2)
+                )
+            )
+
+        display_df["estimated_R"] = display_df["pct_change"].apply(estimateR)
 
         self.display_df = display_df
 
@@ -368,10 +407,8 @@ class Intervention(TalusSEIR):
         self.type = intervention["type"]
         self.model_run = model_run
         self.intervention = intervention
-        if self.type == "past-actual":
-            self.intervention_start_date = intervention["start_date"]
-        else:
-            self.intervention_start_date = intervention["intervention_start_date"]
+        self.model_start_date = intervention["model_start_date"]
+        self.intervention_start_date = intervention["intervention_start_date"]
 
     def load_epi(self):
         super(Intervention, self).__init__(self.type, self.model_run)
@@ -393,21 +430,19 @@ class Intervention(TalusSEIR):
         # same initial conditions as the base run
         if self.type in ("intervention", "past-actual"):
             self.initial_conditions = prior_run.loc[
-                (prior_run["date"] == self.intervention_start_date)
+                (prior_run["date"] == self.model_start_date)
             ].iloc[0]
-
-            print(self.initial_conditions)
 
             self.prior_results = prior_run
 
         # if it's a past intervention that did not take place, start from the
         # best data we have on the day of that intervention
-        elif intervention["type"] == "past-counterfactual":
-            self.initial_conditions = self.actuals[
-                (self.actuals.date == self.intervention_start_date)
+        elif self.type == "past-counterfactual":
+            self.initial_conditions = self.model_run.actuals[
+                (self.model_run.actuals.date == self.intervention_start_date)
             ].iloc[0]
 
-            self.prior_results = self.actuals
+            self.prior_results = self.model_run.actuals
 
     def brute_force_r0(self, new_r0):
         """This function will be obsolete when the procedure for introducing

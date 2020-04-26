@@ -27,6 +27,21 @@ from .epi_models.TalusSEIR import (
 
 _logger = logging.getLogger(__name__)
 
+
+# pulled from run.py, adjusts data to back out dead and recovered
+def get_backfill_historical_estimates(df):
+
+    CONFIRMED_HOSPITALIZED_RATIO = 4
+    RECOVERY_SHIFT = 13
+    HOSPITALIZATION_RATIO = 0.073
+
+    df["estimated_recovered"] = df.cases.shift(RECOVERY_SHIFT).fillna(0)
+    df["active"] = df.cases - (df.deaths + df.estimated_recovered)
+    df["estimated_hospitalized"] = df["active"] / CONFIRMED_HOSPITALIZED_RATIO
+    df["estimated_infected"] = df["estimated_hospitalized"] / HOSPITALIZATION_RATIO
+    return df
+
+
 ### TODO: need to tie together all the interventions and actuals and get a final
 # results set
 class ModelRun:
@@ -170,27 +185,20 @@ class ModelRun:
             # this is an inital run or a past run, will have to build the initial
             # conditions from the timeseries data
             if type == "base":
-                if model_run.model_cases == "divided_into_infected":
-                    cases = model_run.past_data.get(key="cases", default=0)
-                    self.hospitalized = cases * model_run.hospitalization_rate
-                    self.icu = (
-                        self.hospitalized
-                        * model_run.hospitalized_cases_requiring_icu_care
-                    )
-                    self.mild = cases - self.hospitalized - self.icu
-                    self.asymp = self.mild * model_run.percent_asymp
-                    self.dead = model_run.past_data.get(key="deaths", default=0)
-                elif model_run.model_cases == "one_in_4_hospitalized":
-                    self.hospitalized = (
-                        model_run.past_data.get(key="cases", default=0) / 4
-                    )
-                    self.mild = self.hospitalized / model_run.hospitalization_rate
-                    self.icu = (
-                        self.hospitalized
-                        * model_run.hospitalized_cases_requiring_icu_care
-                    )
-                    self.asymp = self.mild * model_run.percent_asymp
-                    self.dead = model_run.past_data.get(key="deaths", default=0)
+                self.hospitalized = model_run.past_data.get(
+                    key="estimated_hospitalized", default=0
+                )
+                self.icu = (
+                    self.hospitalized * model_run.hospitalized_cases_requiring_icu_care
+                )
+                self.mild = (
+                    model_run.past_data.get(key="active", default=0)
+                    - self.hospitalized
+                    - self.icu
+                )
+                self.asymp = self.mild * model_run.percent_asymp
+                self.dead = model_run.past_data.get(key="deaths", default=0)
+
             elif type in ("intervention", "past-actual", "past-counterfactual"):
                 # this should be an intervention run, so the initial conditions are more
                 # fleshed out
@@ -239,7 +247,9 @@ class ModelRun:
         if self.county is None:
             self.population = population_data.get_state_level(self.country, self.state)
             self.beds = beds_data.get_beds_by_country_state(self.country, self.state)
-            self.timeseries = timeseries.get_data(state=self.state)
+            self.timeseries = get_backfill_historical_estimates(
+                timeseries.get_data(state=self.state)
+            )
         else:
             # do county thing
             pass
@@ -317,7 +327,9 @@ class ModelRun:
         if self.county is None:
             self.population = population_data.get_state_level(self.country, self.state)
             self.beds = beds_data.get_state_level(self.state)
-            self.timeseries = timeseries.get_data(state=self.state)
+            self.timeseries = get_backfill_historical_estimates(
+                timeseries.get_data(state=self.state)
+            )
         else:
             # do county thing
             pass
@@ -444,24 +456,29 @@ class ModelRun:
 
 
 col_names = {
-    'infected_a': 'Infected - Mild',
-    'infected_b': 'Infected - Hospitalized',
-    'infected_c': 'Infected - ICU',
-    'dead': 'Dead',
-    'asymp': 'Asymptomatic',
-    'exposed': 'Exposed'
+    "infected_a": "Infected - Mild",
+    "infected_b": "Infected - Hospitalized",
+    "infected_c": "Infected - ICU",
+    "dead": "Dead",
+    "asymp": "Asymptomatic",
+    "exposed": "Exposed",
 }
 
-def plot_df(df_to_plot, cols, line_day=None, interventions=None, title="", y_max=8000000):
+
+def plot_df(
+    df_to_plot, cols, line_day=None, interventions=None, title="", y_max=8000000
+):
     cols.append("date")
     cols.remove("R effective")
+    cols.remove("estimated_R")
 
     r_effective_df = df_to_plot.loc[:, ["date", "R effective"]]
     min_date = r_effective_df["date"].min()
     max_date = r_effective_df["date"].max()
 
-    df_to_plot = df_to_plot.loc[:, cols]
+    r_estimated_df = df_to_plot.loc[:, ["date", "estimated_R"]]
 
+    df_to_plot = df_to_plot.loc[:, cols]
 
     x_dates = df_to_plot["date"].dt.strftime("%Y-%m-%d").sort_values().unique()
 
@@ -476,33 +493,33 @@ def plot_df(df_to_plot, cols, line_day=None, interventions=None, title="", y_max
     # make the population range into the max + 10%
     y_max = stacked["Number of people"].max() * 1.1
 
-    gridkw = dict(height_ratios=[1, 5])
-    fig, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw=gridkw, figsize=(15, 11))
+    gridkw = dict(height_ratios=[1, 1, 4])
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, gridspec_kw=gridkw, figsize=(16, 14))
 
     if line_day is None:
         line_day = datetime.datetime.now() - datetime.timedelta(days=2)
 
-    print(line_day)
-
-    ax2.axvline(line_day, 0, y_max, linestyle="--", color="darkblue")
-    trans = ax2.get_xaxis_transform()
+    ax3.axvline(line_day, 0, y_max, linestyle="--", color="darkblue")
+    trans = ax3.get_xaxis_transform()
     plt.text(
-        line_day + datetime.timedelta(days=2),
-        0.95,
-        'latest data',
-        transform=trans,
+        line_day + datetime.timedelta(days=2), 0.95, "latest data", transform=trans,
     )
 
-    ax2.set_ylim([0, y_max])
+    ax3.set_ylim([0, y_max])
     plt.title(title)
 
     ax1.set_ylim([0, 4])
     ax1.hlines(1, min_date, max_date, linestyles="dashed")
 
+    ax2.set_ylim([0, 4])
+    ax2.hlines(1, min_date, max_date, linestyles="dashed")
+
+    label_height = [0.9, 0.875, 0.85, 0.825, 0.8, 0.775, 0.75, 0.725, 0.75]
+
     if interventions is not None:
         line_list = []
-        for intervention in interventions:
-            ax2.axvline(
+        for i, intervention in enumerate(interventions):
+            ax3.axvline(
                 intervention["intervention_start_date"],
                 0,
                 y_max,
@@ -511,19 +528,23 @@ def plot_df(df_to_plot, cols, line_day=None, interventions=None, title="", y_max
             )
             plt.text(
                 intervention["intervention_start_date"] + datetime.timedelta(days=2),
-                0.9,
+                label_height[i],
                 intervention["name"],
                 transform=trans,
             )
 
     sb.lineplot(x="date", y="R effective", data=r_effective_df, ax=ax1)
-    sb.lineplot(x="date", y="Number of people", hue="Population", data=stacked, ax=ax2)
+    sb.lineplot(x="date", y="estimated_R", data=r_estimated_df, ax=ax2)
+
+    sb.lineplot(x="date", y="Number of people", hue="Population", data=stacked, ax=ax3)
     # df_plt.set_xticklabels(labels=x_dates, rotation=45, ha='right')
 
     return plt
 
 
-def prep_plot(prep_df, chart_cols, line_day=None, interventions=None, title="", y_max=8000000):
+def prep_plot(
+    prep_df, chart_cols, line_day=None, interventions=None, title="", y_max=8000000
+):
     prep_df["date"] = pd.to_datetime(prep_df["date"])
 
     first_case_date = prep_df.loc[(prep_df.infected > 0), "date"].min()
