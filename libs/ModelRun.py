@@ -248,7 +248,7 @@ class ModelRun:
             self.population = population_data.get_state_level(self.country, self.state)
             self.beds = beds_data.get_beds_by_country_state(self.country, self.state)
             self.timeseries = get_backfill_historical_estimates(
-                timeseries.get_data(state=self.state)
+                timeseries.get_data(state=self.state).copy()
             )
         else:
             # do county thing
@@ -328,7 +328,7 @@ class ModelRun:
             self.population = population_data.get_state_level(self.country, self.state)
             self.beds = beds_data.get_state_level(self.state)
             self.timeseries = get_backfill_historical_estimates(
-                timeseries.get_data(state=self.state)
+                timeseries.get_data(state=self.state).copy()
             )
         else:
             # do county thing
@@ -469,75 +469,97 @@ def plot_df(
     df_to_plot, cols, line_day=None, interventions=None, title="", y_max=8000000
 ):
     cols.append("date")
-    cols.remove("R effective")
-    cols.remove("estimated_R")
 
-    r_effective_df = df_to_plot.loc[:, ["date", "R effective"]]
-    min_date = r_effective_df["date"].min()
-    max_date = r_effective_df["date"].max()
+    r_effective_flag = False
 
-    r_estimated_df = df_to_plot.loc[:, ["date", "estimated_R"]]
+    if "R effective" in cols:
+        cols.remove("R effective")
+        r_effective_flag = True
+
+        r_effective_df = df_to_plot.loc[:, ["date", "R effective"]]
+        min_date = r_effective_df["date"].min()
+        max_date = r_effective_df["date"].max()
 
     df_to_plot = df_to_plot.loc[:, cols]
-
     x_dates = df_to_plot["date"].dt.strftime("%Y-%m-%d").sort_values().unique()
-
     df_to_plot.set_index("date", inplace=True)
 
     df_to_plot.columns = [col_names[col] for col in df_to_plot.columns]
-
     stacked = df_to_plot.stack().reset_index()
-
     stacked.columns = ["date", "Population", "Number of people"]
 
     # make the population range into the max + 10%
     y_max = stacked["Number of people"].max() * 1.1
 
-    gridkw = dict(height_ratios=[1, 1, 4])
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, gridspec_kw=gridkw, figsize=(16, 14))
-
     if line_day is None:
         line_day = datetime.datetime.now() - datetime.timedelta(days=2)
 
-    ax3.axvline(line_day, 0, y_max, linestyle="--", color="darkblue")
-    trans = ax3.get_xaxis_transform()
-    plt.text(
-        line_day + datetime.timedelta(days=2), 0.95, "latest data", transform=trans,
-    )
+    if r_effective_flag is True:
+        gridkw = dict(height_ratios=[1, 5])
+        fig, (ax1, ax2) = plt.subplots(2, 1, gridspec_kw=gridkw, figsize=(16, 14))
 
-    ax3.set_ylim([0, y_max])
-    plt.title(title)
+        ax2.axvline(line_day, 0, y_max, linestyle="--", color="darkblue")
+        trans = ax2.get_xaxis_transform()
 
-    ax1.set_ylim([0, 4])
-    ax1.hlines(1, min_date, max_date, linestyles="dashed")
+        plt.text(
+            line_day + datetime.timedelta(days=2), 0.95, "latest data", transform=trans,
+        )
 
-    ax2.set_ylim([0, 4])
-    ax2.hlines(1, min_date, max_date, linestyles="dashed")
+        ax2.set_ylim([0, y_max])
+
+        ax1.set_ylim([0, 4])
+        ax1.hlines(1, min_date, max_date, linestyles="dashed")
+
+        sb.lineplot(x="date", y="R effective", data=r_effective_df, ax=ax1)
+        sb.lineplot(
+            x="date", y="Number of people", hue="Population", data=stacked, ax=ax2
+        )
+    else:
+        plt.figure(figsize=(15, 8))
+        plt.ylim([0, y_max])
+
+        sb.lineplot(x="date", y="Number of people", hue="Population", data=stacked)
+        plt.axvline(line_day, 0, y_max, linestyle="--", color="darkblue")
+        plt.text(
+            line_day + datetime.timedelta(days=2), 0.95 * y_max, "latest data",
+        )
 
     label_height = [0.9, 0.875, 0.85, 0.825, 0.8, 0.775, 0.75, 0.725, 0.75]
 
     if interventions is not None:
         line_list = []
         for i, intervention in enumerate(interventions):
-            ax3.axvline(
-                intervention["intervention_start_date"],
-                0,
-                y_max,
-                color="dimgrey",
-                linestyle="--",
-            )
-            plt.text(
-                intervention["intervention_start_date"] + datetime.timedelta(days=2),
-                label_height[i],
-                intervention["name"],
-                transform=trans,
-            )
+            if r_effective_flag is True:
+                ax2.axvline(
+                    intervention["intervention_start_date"],
+                    0,
+                    y_max,
+                    color="dimgrey",
+                    linestyle="--",
+                )
+                plt.text(
+                    intervention["intervention_start_date"]
+                    + datetime.timedelta(days=2),
+                    label_height[i],
+                    intervention["name"],
+                    transform=trans,
+                )
+            else:
+                plt.axvline(
+                    intervention["intervention_start_date"],
+                    0,
+                    y_max,
+                    color="dimgrey",
+                    linestyle="--",
+                )
+                plt.text(
+                    intervention["intervention_start_date"]
+                    + datetime.timedelta(days=2),
+                    label_height[i] * y_max,
+                    intervention["name"],
+                )
 
-    sb.lineplot(x="date", y="R effective", data=r_effective_df, ax=ax1)
-    sb.lineplot(x="date", y="estimated_R", data=r_estimated_df, ax=ax2)
-
-    sb.lineplot(x="date", y="Number of people", hue="Population", data=stacked, ax=ax3)
-    # df_plt.set_xticklabels(labels=x_dates, rotation=45, ha='right')
+    plt.title(title)
 
     return plt
 
@@ -545,7 +567,7 @@ def plot_df(
 def prep_plot(
     prep_df, chart_cols, line_day=None, interventions=None, title="", y_max=8000000
 ):
-    prep_df["date"] = pd.to_datetime(prep_df["date"])
+    prep_df.loc[:, "date"] = pd.to_datetime(prep_df["date"])
 
     first_case_date = prep_df.loc[(prep_df.infected > 0), "date"].min()
     peak_date = prep_df.loc[(prep_df.infected_b == prep_df.infected_b.max())][
