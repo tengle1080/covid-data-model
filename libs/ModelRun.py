@@ -464,6 +464,15 @@ col_names = {
     "exposed": "Exposed",
 }
 
+col_colors = {
+    "Infected - Mild": "xkcd:light blue",
+    "Infected - Hospitalized": "xkcd:green",
+    "Infected - ICU": "xkcd:magenta",
+    "Dead": "xkcd:red",
+    "Asymptomatic": "xkcd:teal",
+    "Exposed": "xkcd:purple",
+}
+
 
 def plot_df(
     df_to_plot, cols, line_day=None, interventions=None, title="", y_max=8000000
@@ -487,6 +496,9 @@ def plot_df(
     df_to_plot.columns = [col_names[col] for col in df_to_plot.columns]
     stacked = df_to_plot.stack().reset_index()
     stacked.columns = ["date", "Population", "Number of people"]
+
+    # use the col names to set colors for the palette so they stay the same
+    colors = {col: col_colors[col] for col in df_to_plot.columns if col != "date"}
 
     # make the population range into the max + 10%
     y_max = stacked["Number of people"].max() * 1.1
@@ -512,13 +524,24 @@ def plot_df(
 
         sb.lineplot(x="date", y="R effective", data=r_effective_df, ax=ax1)
         sb.lineplot(
-            x="date", y="Number of people", hue="Population", data=stacked, ax=ax2
+            x="date",
+            y="Number of people",
+            hue="Population",
+            palette=colors,
+            data=stacked,
+            ax=ax2,
         )
     else:
         plt.figure(figsize=(15, 8))
         plt.ylim([0, y_max])
 
-        sb.lineplot(x="date", y="Number of people", hue="Population", data=stacked)
+        sb.lineplot(
+            x="date",
+            y="Number of people",
+            hue="Population",
+            palette=colors,
+            data=stacked,
+        )
         plt.axvline(line_day, 0, y_max, linestyle="--", color="darkblue")
         plt.text(
             line_day + datetime.timedelta(days=2), 0.95 * y_max, "latest data",
