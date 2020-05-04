@@ -232,6 +232,7 @@ def get_usa_by_states_df(input_dir, intervention_type):
         )
         .merge(projections_df, on=CommonFields.STATE, how="left")
     )
+    print(states_abbrev.columns)
     STATE_COLS_REMAP = {
         CovidTrackingDataSource.Fields.POSITIVE_TESTS: CUMULATIVE_POSITIVE_TESTS,
         CovidTrackingDataSource.Fields.NEGATIVE_TESTS: CUMULATIVE_NEGATIVE_TESTS,

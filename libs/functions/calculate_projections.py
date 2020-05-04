@@ -38,7 +38,6 @@ def _read_json_as_df(path):
     df = pd.DataFrame.from_records(
         simplejson.load(open(path, "r")),
         columns=CAN_MODEL_OUTPUT_SCHEMA,
-        exclude=CAN_MODEL_OUTPUT_SCHEMA_EXCLUDED_COLUMNS,
     )
     df["date"] = pd.to_datetime(df.date, format="%m/%d/%y")
     df["all_hospitalized"] = df["all_hospitalized"].astype("int")
@@ -49,36 +48,29 @@ def _read_json_as_df(path):
     df["Rt_ci90"] = df["Rt_ci90"].astype("float")
     df["Rt_indicator"] = df["Rt_indicator"].astype("float")
     df["Rt_indicator_ci90"] = df["Rt_indicator_ci90"].astype("float")
+    df["short_fall"] = df.apply(_calc_short_fall, axis=1)
+    df["new_deaths"] = df.dead - df.dead.shift(1)
+
     # Rt_indicator is NaN sometimes
     df.fillna(0, inplace=True)
     return df
 
 
-def _calculate_projection_data(state, file_path, fips=None):
-    """
-    Given a file path, return the calculations we perform for that file.
-    Note in the future maybe return a data type to keep type clarity
-    """
+def calculate_projection_row(model_output: PyseirOutput, state, fips=None):
     # get 16 and 32 days out from now
     today = datetime.datetime.now()
     sixteen_days = today + datetime.timedelta(days=16)
     thirty_two_days = today + datetime.timedelta(days=32)
 
+    df = model_output.data
     record = {}
-
-    if not os.path.exists(file_path):
-        return pd.Series(record)
-
-    df = _read_json_as_df(file_path)
-    df["short_fall"] = df.apply(_calc_short_fall, axis=1)
-
     hosp_16_days, short_fall_16_days = _get_hospitals_and_shortfalls(df, sixteen_days)
     hosp_32_days, short_fall_32_days = _get_hospitals_and_shortfalls(
         df, thirty_two_days
     )
 
-    df["new_deaths"] = df.dead - df.dead.shift(1)
     hospitals_shortfall_date = NULL_VALUE
+
     if not df[(df["short_fall"] > 0)].empty:
         hospitals_shortfall_date = df[(df["short_fall"] > 0)].iloc[0].date
     mean_hospitalizations = df.all_hospitalized.mean().round(0)
@@ -117,6 +109,21 @@ def _calculate_projection_data(state, file_path, fips=None):
     record["Population"] = population
     record["Rt"] = Rt
     record["Rt_ci90"] = Rt_ci90
+    return record
+
+
+def _calculate_projection_data(state, file_path, fips=None):
+    """
+    Given a file path, return the calculations we perform for that file.
+    Note in the future maybe return a data type to keep type clarity
+    """
+
+    record = {}
+
+    if not os.path.exists(file_path):
+        return pd.Series(record)
+
+    df = _read_json_as_df(file_path)
 
     return pd.Series(record)
 
