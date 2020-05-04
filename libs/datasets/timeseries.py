@@ -94,7 +94,7 @@ class TimeseriesDataset(dataset_base.DatasetBase):
 
     def get_subset(
         self,
-        aggregation_level,
+        aggregation_level=None,
         on=None,
         after=None,
         before=None,
@@ -102,7 +102,8 @@ class TimeseriesDataset(dataset_base.DatasetBase):
         state=None,
         county=None,
         fips=None,
-        states=None
+        states=None,
+        intervention=None,
     ) -> "TimeseriesDataset":
         data = self.data
 
@@ -118,6 +119,8 @@ class TimeseriesDataset(dataset_base.DatasetBase):
             data = data[data.fips == fips]
         if states:
             data = data[data[self.Fields.STATE].isin(states)]
+        if intervention:
+            data = data[data[CommonFields.INTERVENTION] == intervention.value]
 
         if on:
             data = data[data.date == on]
@@ -199,12 +202,12 @@ class TimeseriesDataset(dataset_base.DatasetBase):
         return cls(data)
 
     @classmethod
-    def build_from_data_source(cls, source):
+    def build_from_data_source(cls, source, fill_missing_state=True):
         """Build TimeseriesDataset from a data source."""
         if set(source.INDEX_FIELD_MAP.keys()) != set(cls.INDEX_FIELDS):
             raise ValueError("Index fields must match")
 
-        return cls.from_source(source)
+        return cls.from_source(source, fill_missing_state=fill_missing_state)
 
     def to_latest_values_dataset(self):
         from libs.datasets.latest_values_dataset import LatestValuesDataset

@@ -87,10 +87,11 @@ US_STATES_FILTER = dataset_filter.DatasetFilter(
 
 
 @functools.lru_cache(None)
-def build_timeseries_with_all_fields() -> TimeseriesDataset:
+def build_timeseries_with_all_fields(filters=None) -> TimeseriesDataset:
     return build_combined_dataset_from_sources(
         TimeseriesDataset,
         ALL_TIMESERIES_FEATURE_DEFINITION,
+        filters=filters
     )
 
 
@@ -109,6 +110,15 @@ def build_us_latest_with_all_fields() -> LatestValuesDataset:
         LatestValuesDataset,
         ALL_FIELDS_FEATURE_DEFINITION,
         filters=[US_STATES_FILTER]
+    )
+
+
+@functools.lru_cache(None)
+def build_latest_with_all_fields(filters=None) -> LatestValuesDataset:
+    return build_combined_dataset_from_sources(
+        LatestValuesDataset,
+        ALL_FIELDS_FEATURE_DEFINITION,
+        filters=filters
     )
 
 

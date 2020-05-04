@@ -3,8 +3,10 @@ import logging
 import os
 
 from libs.pipelines import api_pipeline
+from libs.datasets import dataset_filter
 from libs.datasets.dataset_utils import AggregationLevel
 from libs.enums import Intervention
+from libs import us_state_abbrev
 
 logger = logging.getLogger(__name__)
 PROD_BUCKET = "data.covidactnow.org"
@@ -36,41 +38,22 @@ PROD_BUCKET = "data.covidactnow.org"
 )
 def deploy_counties_api(disable_validation, input_dir, output, summary_output):
     """The entry function for invocation"""
-
     # check that the dirs exist before starting
     for directory in [input_dir, output, summary_output]:
         if not os.path.isdir(directory):
             raise NotADirectoryError(directory)
 
+    aggregate_level = AggregationLevel.COUNTY
+    data_filter = dataset_filter.DatasetFilter(
+        aggregate_level=aggregate_level,
+        country="USA",
+        states=list(us_state_abbrev.abbrev_us_state.keys())
+    )
+    filters = [data_filter]
+
     for intervention in list(Intervention):
-        county_result = api_pipeline.run_projections(
-            input_dir,
-            AggregationLevel.COUNTY,
-            intervention,
-            run_validation=not disable_validation,
-        )
-        county_summaries, county_timeseries = api_pipeline.generate_api(
-            county_result, input_dir
-        )
-        api_pipeline.deploy_results([*county_summaries, *county_timeseries], output)
-
-        counties_summary = api_pipeline.build_counties_summary(
-            county_summaries, intervention
-        )
-        counties_timeseries = api_pipeline.build_counties_timeseries(
-            county_timeseries, intervention
-        )
-        summarized_timeseries = api_pipeline.build_prediction_header_timeseries_data(
-            counties_timeseries
-        )
-        api_pipeline.deploy_prediction_timeseries_csvs(
-            summarized_timeseries, summary_output
-        )
-
-        api_pipeline.deploy_results([counties_summary], summary_output, write_csv=True)
-        api_pipeline.deploy_results([counties_timeseries], summary_output)
-
-        logger.info("finished top counties job")
+        logger.info(f"Running intervention {intervention.name}")
+        api_pipeline.run_for_intervention(aggregate_level, intervention, filters)
 
 
 @click.command("county-fips-summaries")

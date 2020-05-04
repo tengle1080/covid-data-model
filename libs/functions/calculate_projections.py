@@ -6,6 +6,7 @@ import simplejson
 from libs.us_state_abbrev import US_STATE_ABBREV
 from libs.datasets import FIPSPopulation
 from libs.datasets import CommonFields
+from libs.datasets.timeseries import TimeseriesDataset
 from libs.datasets import can_model_output_schema as schema
 from libs.datasets.can_model_output_schema import (
     CAN_MODEL_OUTPUT_SCHEMA,
@@ -33,30 +34,8 @@ def _beds_after_given_date(df, date_out):
     return first_record_after_date[bed_columns].values[0]
 
 
-def _read_json_as_df(path):
-    # TODO: read this from a dataset class
-    df = pd.DataFrame.from_records(
-        simplejson.load(open(path, "r")),
-        columns=CAN_MODEL_OUTPUT_SCHEMA,
-    )
-    df["date"] = pd.to_datetime(df.date, format="%m/%d/%y")
-    df["all_hospitalized"] = df["all_hospitalized"].astype("int")
-    df["beds"] = df["beds"].astype("int")
-    df["dead"] = df["dead"].astype("int")
-    df["population"] = df["population"].astype("int")
-    df["Rt"] = df["Rt"].astype("float")
-    df["Rt_ci90"] = df["Rt_ci90"].astype("float")
-    df["Rt_indicator"] = df["Rt_indicator"].astype("float")
-    df["Rt_indicator_ci90"] = df["Rt_indicator_ci90"].astype("float")
-    df["short_fall"] = df.apply(_calc_short_fall, axis=1)
-    df["new_deaths"] = df.dead - df.dead.shift(1)
+def calculate_projection_row(model_output: TimeseriesDataset):
 
-    # Rt_indicator is NaN sometimes
-    df.fillna(0, inplace=True)
-    return df
-
-
-def calculate_projection_row(model_output: PyseirOutput, state, fips=None):
     # get 16 and 32 days out from now
     today = datetime.datetime.now()
     sixteen_days = today + datetime.timedelta(days=16)
@@ -83,17 +62,9 @@ def calculate_projection_row(model_output: PyseirOutput, state, fips=None):
     peak_hospitalizations_short_falls = df.iloc[df.all_hospitalized.idxmax()].short_fall
     peak_deaths_date = df.iloc[df.new_deaths.idxmax()].date
 
-    # A bit hacky, but the non estimated values don't have population, so
-    # take the highest value (there are two values in the column - 0 and <population>
-    population = df.population.max()
-
     # use the last row until we have a way to get day 0 reliably
     Rt = df.iloc[-1].Rt
     Rt_ci90 = df.iloc[-1].Rt_ci90  # ditto
-
-    record[CommonFields.STATE] = state
-    if fips:
-        record[CommonFields.FIPS] = fips
 
     record["16-day_Hospitalization_Prediction"] = hosp_16_days
     record["32-day_Hospitalization_Prediction"] = hosp_32_days
@@ -106,7 +77,6 @@ def calculate_projection_row(model_output: PyseirOutput, state, fips=None):
     record["Hospital Shortfall Date"] = hospitals_shortfall_date
     record["Peak Hospitlizations Shortfall"] = peak_hospitalizations_short_falls
     record["Beds at Peak Hospitilization Date"] = beds_at_peak_hospitalization_date
-    record["Population"] = population
     record["Rt"] = Rt
     record["Rt_ci90"] = Rt_ci90
     return record

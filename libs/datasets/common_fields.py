@@ -57,3 +57,54 @@ class CommonIndexFields(object):
     AGGREGATE_LEVEL = CommonFields.AGGREGATE_LEVEL
 
     DATE = CommonFields.DATE
+
+
+class ModelFields(object):
+    TOTAL = "total"          # All people in the model. This should always be population.
+    TOTAL_SUSCEPTIBLE = "susceptible"
+    EXPOSED = "exposed"
+    INFECTED = "infected"
+    # Infected by not hospitalized
+    INFECTED_A = "infected_a"
+
+    # Hospitalized but not ICU
+    INFECTED_B = "infected_b"
+    # In ICU
+    INFECTED_C = "infected_c"
+
+    # Total hospitalized
+    ALL_HOSPITALIZED = "all_hospitalized"
+
+    # Total infected (in hospital or not)
+    ALL_INFECTED = "all_infected"
+
+    DEAD = "dead"
+
+    # General bed capacity excluding ICU beds.
+    BEDS = "beds"
+
+    CUMULATIVE_INFECTED = "cumulative_infected"
+
+    # Effective reproduction number at time t.
+    Rt = 'Rt'
+
+    # 90% confidence interval at time t.
+    Rt_ci90 = 'Rt_ci90'
+
+    CURRENT_VENTILATED = 'current_ventilated'
+
+    POPULATION = "population"
+
+    ICU_BED_CAPACITY = "icu_bed_capacity"
+
+    VENTILATOR_CAPACITY = "ventilator_capacity"
+
+    RT_INDICATOR = 'Rt_indicator'
+
+    RT_INDICATOR_CI90 = 'Rt_indicator_ci90'
+
+    FIPS = "fips"
+    STATE = "state"
+    AGGREGATE_LEVEL = "aggregate_level"
+    COUNTRY = "country"
+    INTERVENTION = "intervention"

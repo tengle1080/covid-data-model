@@ -66,8 +66,12 @@ class _Actuals(pydantic.BaseModel):
     ICUBeds: Optional[_ResourceUtilization] = pydantic.Field(...)
 
 
-class CovidActNowAreaSummary(pydantic.BaseModel):
+class CovidActNowSummary(pydantic.BaseModel):
     countryName: str = "US"
+    stateName: str = pydantic.Field(..., description="The state name")
+    countyName: Optional[str] = pydantic.Field(
+        default=None, description="The county name"
+    )
     fips: str = pydantic.Field(
         ..., description="Fips for State + County. Five character code"
     )
@@ -82,19 +86,6 @@ class CovidActNowAreaSummary(pydantic.BaseModel):
     )
     projections: Optional[_Projections] = pydantic.Field(...)
     actuals: Optional[_Actuals] = pydantic.Field(...)
-
-
-# TODO(igor): countyName *must* be None
-class CovidActNowStateSummary(CovidActNowAreaSummary):
-    stateName: str = pydantic.Field(..., description="The state name")
-    countyName: Optional[str] = pydantic.Field(
-        default=None, description="The county name"
-    )
-
-
-class CovidActNowCountySummary(CovidActNowAreaSummary):
-    stateName: str = pydantic.Field(..., description="The state name")
-    countyName: str = pydantic.Field(..., description="The county name")
 
 
 class CANPredictionTimeseriesRow(pydantic.BaseModel):
@@ -164,7 +155,7 @@ class PredictionTimeseriesRowWithHeader(CANPredictionTimeseriesRow):
     )
 
 
-class CovidActNowStateTimeseries(CovidActNowStateSummary):
+class CovidActNowTimeseries(CovidActNowSummary):
     timeseries: List[CANPredictionTimeseriesRow] = pydantic.Field(...)
 
     # pylint: disable=no-self-argument
@@ -201,27 +192,12 @@ class CovidActNowStateTimeseries(CovidActNowStateSummary):
         return rows
 
 
-class CovidActNowCountyTimeseries(CovidActNowCountySummary):
-    timeseries: List[CANPredictionTimeseriesRow] = pydantic.Field(...)
-
-class CovidActNowCountiesAPI(pydantic.BaseModel):
-    __root__: List[CovidActNowCountySummary] = pydantic.Field(...)
+class CovidActNowBulkSummary(pydantic.BaseModel):
+    __root__: List[CovidActNowSummary] = pydantic.Field(...)
 
 
-class CovidActNowStatesSummary(pydantic.BaseModel):
-    __root__: List[CovidActNowStateSummary] = pydantic.Field(...)
-
-
-class CovidActNowStatesTimeseries(pydantic.BaseModel):
-    __root__: List[CovidActNowStateTimeseries] = pydantic.Field(...)
-
-
-class CovidActNowCountiesSummary(pydantic.BaseModel):
-    __root__: List[CovidActNowCountySummary] = pydantic.Field(...)
-
-
-class CovidActNowCountiesTimeseries(pydantic.BaseModel):
-    __root__: List[CovidActNowCountyTimeseries] = pydantic.Field(...)
+class CovidActNowBulkTimeseries(pydantic.BaseModel):
+    __root__: List[CovidActNowTimeseries] = pydantic.Field(...)
 
 
 class CountyFipsSummary(pydantic.BaseModel):
