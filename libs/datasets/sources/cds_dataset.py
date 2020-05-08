@@ -1,5 +1,6 @@
 import logging
 import numpy
+import functools
 import pandas as pd
 from libs.datasets import data_source
 from libs.datasets import dataset_utils
@@ -77,6 +78,7 @@ class CDSDataset(data_source.DataSource):
         super().__init__(data)
 
     @classmethod
+    @functools.lru_cache(None)
     def local(cls) -> "CDSDataset":
         data_root = dataset_utils.LOCAL_PUBLIC_DATA_PATH
         return cls(data_root / cls.DATA_PATH)

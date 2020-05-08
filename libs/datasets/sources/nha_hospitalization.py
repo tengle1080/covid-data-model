@@ -1,4 +1,5 @@
 import pandas as pd
+import functools
 from libs.datasets.timeseries import TimeseriesDataset
 from libs.datasets import data_source
 from libs.datasets import dataset_utils
@@ -53,6 +54,7 @@ class NevadaHospitalAssociationData(data_source.DataSource):
         return data
 
     @classmethod
+    @functools.lru_cache(None)
     def local(cls):
         data_root = dataset_utils.LOCAL_PUBLIC_DATA_PATH
         input_path = data_root / cls.DATA_PATH

@@ -1,5 +1,6 @@
 import logging
 from libs import enums
+import functools
 import pandas as pd
 from libs.datasets import dataset_utils
 from libs.datasets import data_source
@@ -86,6 +87,7 @@ class CovidCareMapBeds(data_source.DataSource):
         return data[~is_virgin_islands]
 
     @classmethod
+    @functools.lru_cache(None)
     def local(cls) -> "CovidCareMapBeds":
         data_root = dataset_utils.LOCAL_PUBLIC_DATA_PATH
         # Load county_data

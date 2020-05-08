@@ -2,6 +2,7 @@ import logging
 import numpy
 import pandas as pd
 import pathlib
+import functools
 from libs.datasets import dataset_utils
 from libs.datasets import data_source
 from libs.datasets.common_fields import CommonIndexFields
@@ -164,6 +165,7 @@ class JHUDataset(data_source.DataSource):
         return pd.concat([data[~(is_county_level & has_fips)], result])
 
     @classmethod
+    @functools.lru_cache(None)
     def local(cls) -> "JHUDataset":
         data_root = dataset_utils.LOCAL_PUBLIC_DATA_PATH
         return cls(data_root / cls.DATA_FOLDER)

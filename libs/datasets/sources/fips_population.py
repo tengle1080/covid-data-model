@@ -1,5 +1,6 @@
 import pathlib
 import pandas as pd
+import functools
 from libs.datasets import dataset_utils
 from libs.datasets import data_source
 from libs.us_state_abbrev import US_STATE_ABBREV, ABBREV_US_FIPS
@@ -50,6 +51,7 @@ class FIPSPopulation(data_source.DataSource):
         super().__init__(data)
 
     @classmethod
+    @functools.lru_cache(None)
     def local(cls):
         return cls(cls.FILE_PATH)
 

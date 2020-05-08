@@ -1,6 +1,7 @@
 import logging
 from collections import defaultdict
 from libs import enums
+import functools
 import pandas as pd
 from libs.datasets import dataset_utils
 from libs.datasets.dataset_utils import AggregationLevel
@@ -169,6 +170,7 @@ class DHBeds(data_source.DataSource):
         return data[~is_virgin_islands]
 
     @classmethod
+    @functools.lru_cache(None)
     def local(cls) -> "DHBeds":
         data_root = dataset_utils.LOCAL_PUBLIC_DATA_PATH
         return cls(data_root / cls.DATA_PATH)
