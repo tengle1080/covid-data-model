@@ -38,6 +38,7 @@ ALL_STATES = [getattr(state_obj, "name") for state_obj in us.STATES]
 
 
 def _cache_global_datasets():
+    root.info('in cache global datasets')
     global nyt_dataset, cds_dataset
     if cds_dataset is None:
         cds_dataset = CDSDataset.local()
@@ -148,17 +149,19 @@ def _state_only_pipeline(
     output_dir=None,
 ):
     states_only = True
+    root.info('inferring')
     _infer_rt(state, states_only=states_only)
-    _run_mle_fits(state, states_only=states_only)
-    _run_ensembles(
-        state,
-        ensemble_kwargs=dict(
-            run_mode=run_mode,
-            generate_report=generate_reports,
-            covid_timeseries=nyt_dataset,
-        ),
-        states_only=states_only,
-    )
+    root.info('done')
+    #_run_mle_fits(state, states_only=states_only)
+    #_run_ensembles(
+    #    state,
+    #    ensemble_kwargs=dict(
+    #        run_mode=run_mode,
+    #        generate_report=generate_reports,
+    #        covid_timeseries=nyt_dataset,
+    #    ),
+    #    states_only=states_only,
+    #)
     if generate_reports:
         _generate_state_reports(state)
     # remove outputs atm. just output at the end
@@ -174,25 +177,34 @@ def _state_only_pipeline(
 def _build_all_for_states(
     states=[],
     run_mode=DEFAULT_RUN_MODE,
-    generate_reports=False,
+    generate_reports,
     output_interval_days=4,
-    skip_download=False,
+    skip_download,
     output_dir=None,
-    skip_whitelist=False,
+    skip_whitelist,
 ):
+
+    process_counties = False
+    only_infer = True
+    root.info('in build all for states')
     # prepare data
     _cache_global_datasets()
     if not skip_download:
+        root.info('caching data~~~~~~~~~~~~~~~~~~~~~')
         cache_all_data()
     if not skip_whitelist:
+        root.info('generating whitelist~~~~~~~~~~~~~')
         _generate_whitelist()
 
-    # run states in paralell
-    all_county_fips = {}
-    for state in states:
-        state_county_fips = model_fitter.build_county_list(state)
-        county_fips_per_state = {fips: state for fips in state_county_fips}
-        all_county_fips.update(county_fips_per_state)
+    # run states in parallel
+    if process_counties:
+      root.info('processing counties~~~~~~~~~~~~~~~~')
+      all_county_fips = {}
+      for state in states:
+          state_county_fips = model_fitter.build_county_list(state)
+          county_fips_per_state = {fips: state for fips in state_county_fips}
+          all_county_fips.update(county_fips_per_state)
+
 
     # do everything for just states in paralell
     p = Pool()
@@ -205,12 +217,14 @@ def _build_all_for_states(
     )
     p.map(states_only_func, states)
 
-    # calculate calculate county inference
-    p.map(infer_rt_module.run_county, all_county_fips.keys())
+    if process_counties:
+      root.info('processing counties')
+      # calculate calculate county inference
+      p.map(infer_rt_module.run_county, all_county_fips.keys())
 
-    # calculate model fit
-    root.info(f"executing model for {len(all_county_fips)} counties")
-    fitters = p.map(model_fitter._execute_model_for_fips, all_county_fips.keys())
+      # calculate model fit
+      root.info(f"executing model for {len(all_county_fips)} counties")
+      fitters = p.map(model_fitter._execute_model_for_fips, all_county_fips.keys())
 
     df = pd.DataFrame([fit.fit_results for fit in fitters if fit])
     df["state"] = df.fips.replace(all_county_fips)
@@ -220,13 +234,14 @@ def _build_all_for_states(
     state_dfs = [state_df for name, state_df in df.groupby("state")]
     p.map(model_fitter._persist_results_per_state, state_dfs)
 
-    # calculate ensemble
-    root.info(f"running ensemble for {len(all_county_fips)} counties")
-    ensemble_func = partial(
-        _run_county,
-        ensemble_kwargs=dict(run_mode=run_mode, generate_report=generate_reports),
-    )
-    p.map(ensemble_func, all_county_fips.keys())
+    if process_counties:
+      # calculate ensemble
+      root.info(f"running ensemble for {len(all_county_fips)} counties")
+      ensemble_func = partial(
+          _run_county,
+          ensemble_kwargs=dict(run_mode=run_mode, generate_report=generate_reports),
+      )
+      p.map(ensemble_func, all_county_fips.keys())
 
     # output it all
     output_interval_days = int(output_interval_days)
@@ -245,7 +260,8 @@ def _build_all_for_states(
             cds_dataset=cds_dataset,
             output_dir=output_dir,
         )
-        web_ui_mapper.generate_state(all_fips=all_county_fips.keys())
+        if process_counties:
+          web_ui_mapper.generate_state(all_fips=all_county_fips.keys())
     p.close()
     p.join()
 
@@ -255,31 +271,35 @@ def _build_all_for_states(
 def _run_all(
     state=None,
     run_mode=DEFAULT_RUN_MODE,
-    generate_reports=False,
+    generate_reports=True,
     output_interval_days=1,
     skip_download=False,
     states_only=False,
     output_dir=None,
     skip_whitelist=False,
 ):
+    root.warn('in run all')
+    exit()
     if state:
         # Deprecate temporarily since not needed. Our full model fits have
         # superseded these for now. But we may return to a context where this
         # method is used to measure localized Reff.
         # if not states_only:
         #     _impute_start_dates(state)
-        root.warn("running deprecated method")
+        root.warn("running deprecated methodzzzz")
+        exit()
         _infer_rt(state, states_only=states_only)
-        _run_mle_fits(state, states_only=states_only)
-        _run_ensembles(
-            state,
-            ensemble_kwargs=dict(
-                run_mode=run_mode,
-                generate_report=generate_reports,
-                covid_timeseries=nyt_dataset,
-            ),
-            states_only=states_only,
-        )
+        root.info('done with infer')
+        #_run_mle_fits(state, states_only=states_only)
+        #_run_ensembles(
+        #    state,
+        #    ensemble_kwargs=dict(
+        #        run_mode=run_mode,
+        #        generate_report=generate_reports,
+        #        covid_timeseries=nyt_dataset,
+        #    ),
+        #    states_only=states_only,
+        #)
         if generate_reports:
             _generate_state_reports(state)
         # remove outputs atm. just output at the end
@@ -291,6 +311,7 @@ def _run_all(
             run_mode=run_mode,
         )
     else:
+        root.info('in else statement')
         if states_only:
             f = partial(
                 _run_all,
@@ -481,6 +502,7 @@ def run_all(
     output_dir,
     states_only,
 ):
+    root.info('WE ARE HERE')
     _run_all(
         state,
         run_mode,
@@ -538,12 +560,14 @@ def run_all(
 def build_all(
     states,
     run_mode,
-    generate_reports,
+    generate_reports = True,
     output_interval_days,
-    skip_download,
+    skip_download = True,
     output_dir,
-    skip_whitelist,
+    skip_whitelist = True,
 ):
+    logging.basicConfig(level=logging.INFO)
+    root.info('WE ARE HERE')
     # split columns by ',' and remove whitespace
     states = [c.strip() for c in states]
     states = [state for state in states if state in ALL_STATES]

@@ -321,7 +321,7 @@ class RtInferenceEngine:
 
         return dates[start_idx:], times[start_idx:], posteriors
 
-    def infer_all(self, plot=False, shift_deaths=0):
+    def infer_all(self, plot=True, shift_deaths=0):
         """
         Infer R_t from all available data sources.
 
@@ -504,8 +504,13 @@ def run_state(state, states_only=False):
     states_only: bool
         If True only run the state level.
     """
+    root.info('about to check state')
+    exit()
     state_obj = us.states.lookup(state)
+    root.info('done checking state')
+    root.info('run for fips starting')
     df = RtInferenceEngine.run_for_fips(state_obj.fips)
+    root.info('run for fips done')
     output_path = get_run_artifact_path(state_obj.fips, RunArtifact.RT_INFERENCE_RESULT)
     df.to_json(output_path)
 
