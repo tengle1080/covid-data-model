@@ -177,11 +177,11 @@ def _state_only_pipeline(
 def _build_all_for_states(
     states=[],
     run_mode=DEFAULT_RUN_MODE,
-    generate_reports,
+    generate_reports=False,
     output_interval_days=4,
-    skip_download,
+    skip_download=True,
     output_dir=None,
-    skip_whitelist,
+    skip_whitelist=True,
 ):
 
     process_counties = False
@@ -560,10 +560,10 @@ def run_all(
 def build_all(
     states,
     run_mode,
-    generate_reports = True,
-    output_interval_days,
-    skip_download = True,
     output_dir,
+    output_interval_days,
+    generate_reports = True,
+    skip_download = True,
     skip_whitelist = True,
 ):
     logging.basicConfig(level=logging.INFO)
