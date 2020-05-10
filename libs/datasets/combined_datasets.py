@@ -125,20 +125,14 @@ def get_us_latest_for_fips(fips) -> dict:
     return us_latest.get_record_for_fips(fips)
 
 
+@functools.lru_cache(None)
 def load_data_sources(
-    feature_definition_config,
+    data_source_classes,
 ) -> Dict[Type[data_source.DataSource], data_source.DataSource]:
-
-    data_source_classes = []
-    for classes in feature_definition_config.values():
-        data_source_classes.extend(classes)
     loaded_data_sources = {}
 
-    for data_source_class in data_source_classes:
-        for data_source_cls in data_source_classes:
-            # only load data source once
-            if data_source_cls not in loaded_data_sources:
-                loaded_data_sources[data_source_cls] = data_source_cls.local()
+    for data_source_cls in data_source_classes:
+        loaded_data_sources[data_source_cls] = data_source_cls.local()
 
     return loaded_data_sources
 
@@ -157,7 +151,10 @@ def build_combined_dataset_from_sources(
         filters: A list of dataset filters applied to the datasets before
             assembling features.
     """
-    loaded_data_sources = load_data_sources(feature_definition_config)
+    all_data_source_classes = set()
+    for data_source_classes in feature_definition_config.values():
+        all_data_source_classes.update(data_source_classes)
+    loaded_data_sources = load_data_sources(frozenset(all_data_source_classes))
 
     # Convert data sources to instances of `target_data_cls`.
     intermediate_datasets = {
@@ -173,13 +170,29 @@ def build_combined_dataset_from_sources(
         intermediate_datasets[key] = dataset
 
     # Build feature columns from feature_definition_config.
-    data = pd.DataFrame({})
+    field_series = []
     for field, data_source_classes in feature_definition_config.items():
+        if not data_source_classes:
+            # Don't add fields for fields without any data source classes.
+            continue
+
+        field_df = pd.DataFrame(
+            {}, index=target_dataset_cls.INDEX_FIELDS, columns=[field]
+        )
         for data_source_cls in data_source_classes:
             dataset = intermediate_datasets[data_source_cls]
-
-            data = dataset_utils.fill_fields_with_data_source(
-                data, dataset.data, target_dataset_cls.INDEX_FIELDS, [field]
+            new_data = dataset.data.set_index(target_dataset_cls.INDEX_FIELDS)
+            field_df = dataset_utils.fill_fields_with_data_source(
+                field_df, new_data, [field]
             )
 
-    return target_dataset_cls(data)
+        field_series.append(field_df)
+
+    # Sort fields by number of rows to improve performance of concatenation.
+    # Concat will be joining series under the hood and starting with the largest
+    # series makes joins with smaller series slower.
+    field_series = sorted(field_series, key=lambda x: len(x))
+
+    # Combine all fields by index.
+    combined = pd.concat(field_series, axis=1, copy=False).reset_index()
+    return target_dataset_cls(combined)

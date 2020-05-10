@@ -1,4 +1,5 @@
 from typing import List
+import time
 import os
 import enum
 import logging
@@ -284,11 +285,19 @@ def summarize(data, aggregate_level, groupby):
     print(index_size[index_size > 1])
 
 
+def _merge(a, b, columns):
+    for column in columns:
+        if column not in a.columns:
+            a[column] = None
+
+    a_sub = a[columns]
+    b_sub = b[columns]
+    combined = b_sub.combine_first(a_sub)
+    return combined
+
+
 def fill_fields_with_data_source(
-    existing_df: pd.DataFrame,
-    data_source: pd.DataFrame,
-    index_fields: List[str],
-    columns_to_fill: List[str],
+    existing_df: pd.DataFrame, new_data: pd.DataFrame, columns_to_fill: List[str],
 ) -> pd.DataFrame:
     """Pull columns from an existing data source into an existing data frame.
 
@@ -330,48 +339,17 @@ def fill_fields_with_data_source(
 
     Returns: Updated dataframe with requested columns filled from data_source data.
     """
-    new_data = data_source.set_index(index_fields)
-
     # If no data exists, return all rows from new data with just the requested columns.
-    if not len(existing_df):
+    if existing_df.dropna().empty:
         for column in columns_to_fill:
             if column not in new_data.columns:
                 new_data[column] = None
-        return new_data[columns_to_fill].reset_index()
-    existing_df = existing_df.set_index(index_fields)
+        return new_data[columns_to_fill]
 
-    # Sort indices so that we have chunks of equal length in the
-    # correct order so that we can splice in values.
-    existing_df = existing_df.sort_index()
-    new_data = new_data.sort_index()
-
-    # Build series that point to rows that match in each data frame.
-    existing_df_in_new_data = existing_df.index.isin(new_data.index)
-    new_data_in_existing_df = new_data.index.isin(existing_df.index)
-
-    if not sum(existing_df_in_new_data) == sum(new_data_in_existing_df):
-        print(new_data.loc[new_data_in_existing_df, columns_to_fill])
-        existing_in_new = sum(existing_df_in_new_data)
-        new_in_existing = sum(new_data_in_existing_df)
-        raise ValueError(
-            f"Number of rows should be the for data to replace: {existing_in_new} -> {new_in_existing}: {columns_to_fill}"
-        )
-
-    # If a column doesn't exist in the existing data, add it (throws an error)
-    # otherwise.
     for column in columns_to_fill:
         if column not in existing_df.columns:
             existing_df[column] = None
 
-    # Fill in values for rows that match in both data frames.
-    existing_df.loc[existing_df_in_new_data, columns_to_fill] = new_data.loc[
-        new_data_in_existing_df, columns_to_fill
-    ]
-    # Get rows that do not exist in the existing data frame
-    missing_new_data = new_data[~new_data_in_existing_df]
-
-    data = pd.concat(
-        [existing_df.reset_index(), missing_new_data[columns_to_fill].reset_index(),]
-    )
-
-    return data
+    existing_df = existing_df[columns_to_fill]
+    new_data = new_data[columns_to_fill]
+    return new_data.combine_first(existing_df)
