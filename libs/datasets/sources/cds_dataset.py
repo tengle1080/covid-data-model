@@ -34,6 +34,7 @@ class CDSDataset(data_source.DataSource):
         POPULATION = "population"
         LATITUDE = "lat"
         LONGITUDE = "long"
+        LEVEL = "level"
         URL = "url"
         CASES = "cases"
         DEATHS = "deaths"
@@ -71,61 +72,24 @@ class CDSDataset(data_source.DataSource):
         Fields.TESTED,
     ]
 
-    def __init__(self, input_path):
-        data = pd.read_csv(input_path, parse_dates=[self.Fields.DATE])
-        data = self.standardize_data(data)
-        super().__init__(data)
-
     @classmethod
     def local(cls) -> "CDSDataset":
         data_root = dataset_utils.LOCAL_PUBLIC_DATA_PATH
-        return cls(data_root / cls.DATA_PATH)
+        input_path = data_root / cls.DATA_PATH
+        data = pd.read_csv(input_path, parse_dates=[cls.Fields.DATE], dtype={"fips": str})
+        data = cls.standardize_data(data)
+        return cls(data)
 
     @classmethod
     def standardize_data(cls, data: pd.DataFrame) -> pd.DataFrame:
-        data = dataset_utils.strip_whitespace(data)
+        city_data = data["level"] == "city"
+        data = data.loc[~city_data, :]
 
-        data = cls.remove_duplicate_city_data(data)
-
-        # CDS state level aggregates are identifiable by not having a city or county.
-        only_county = data[cls.Fields.COUNTY].notnull() & data[cls.Fields.STATE].notnull()
-        county_hits = numpy.where(only_county, "county", None)
-        only_state = (
-            data[cls.Fields.COUNTY].isnull()
-            & data[cls.Fields.CITY].isnull()
-            & data[cls.Fields.STATE].notnull()
-        )
-        only_country = (
-            data[cls.Fields.COUNTY].isnull()
-            & data[cls.Fields.CITY].isnull()
-            & data[cls.Fields.STATE].isnull()
-            & data[cls.Fields.COUNTRY].notnull()
-        )
-
-        state_hits = numpy.where(only_state, "state", None)
-        county_hits[state_hits != None] = state_hits[state_hits != None]
-        county_hits[only_country] = "country"
-        data[cls.Fields.AGGREGATE_LEVEL] = county_hits
-
-        # Backfilling FIPS data based on county names.
-        # The following abbrev mapping only makes sense for the US
-        # TODO: Fix all missing cases
-        data = data[data["country"] == "United States"]
-        data["state_abbr"] = data[cls.Fields.STATE].apply(
-            lambda x: US_STATE_ABBREV[x] if x in US_STATE_ABBREV else x
-        )
-        data["state_tmp"] = data["state"]
-        data["state"] = data["state_abbr"]
-
-        fips_data = dataset_utils.build_fips_data_frame()
-        data = dataset_utils.add_fips_using_county(data, fips_data)
-
-        # ADD Negative tests
+        data[cls.Fields.AGGREGATE_LEVEL] = data[cls.Fields.LEVEL]
         data[cls.Fields.NEGATIVE_TESTS] = data[cls.Fields.TESTED] - data[cls.Fields.CASES]
-
-        # put the state column back
-        data["state"] = data["state_tmp"]
-
+        # There are a handful of regions that have
+        combined_fips = data.fips.apply(lambda x: len(x) if not pd.isna(x) else 0) > 5
+        data = data.loc[~combined_fips, :]
         return data
 
     @classmethod
