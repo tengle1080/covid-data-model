@@ -62,15 +62,13 @@ def _get_testing_df():
 
 
 def get_testing_timeseries_by_state(state):
-    testing_df = _get_testing_df()
-    is_state = (
-        testing_df[CovidTrackingDataSource.Fields.AGGREGATE_LEVEL] == AggregationLevel.STATE.value
-    )
+    testing_df = build_us_timeseries_with_all_fields().data
+    is_state = testing_df[CommonFields.AGGREGATE_LEVEL] == AggregationLevel.STATE.value
     # just select state
-    state_testing_df = testing_df[
-        is_state & (testing_df[CovidTrackingDataSource.Fields.STATE] == state)
+    return testing_df.loc[
+        is_state & (testing_df[CommonFields.STATE] == state),
+        [CommonFields.NEGATIVE_TESTS, CommonFields.POSITIVE_TESTS, CommonFields.DATE],
     ]
-    return state_testing_df[CovidTrackingDataSource.TESTS_ONLY_FIELDS]
 
 
 def get_testing_timeseries_by_fips(fips):
