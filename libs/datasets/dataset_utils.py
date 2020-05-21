@@ -246,7 +246,6 @@ def add_fips_using_county(data, fips_data) -> pd.Series:
         _logger.warning(f"{non_matching}")
         # TODO: Make this an error?
 
-
     # Handles if a fips column already in the dataframe.
     if "fips_r" in data.columns:
         return data.drop("fips").rename({"fips_r": "fips"}, axis=1)
@@ -315,7 +314,7 @@ def fill_fields_with_data_source(
 
     Returns: Updated dataframe with requested columns filled from data_source data.
     """
-    new_data = data_source.set_index(index_fields, verify_integrity=True)
+    new_data = data_source.set_index(index_fields)
 
     # If no data exists, return all rows from new data with just the requested columns.
     if not len(existing_df):
@@ -323,7 +322,7 @@ def fill_fields_with_data_source(
             if column not in new_data.columns:
                 new_data[column] = None
         return new_data[columns_to_fill].reset_index()
-    existing_df = existing_df.set_index(index_fields, verify_integrity=True)
+    existing_df = existing_df.set_index(index_fields)
 
     # Sort indices so that we have chunks of equal length in the
     # correct order so that we can splice in values.
@@ -344,6 +343,7 @@ def fill_fields_with_data_source(
             print(existing_df.loc[~existing_df.index.isin(new_data.index), columns_to_fill])
         existing_in_new = sum(existing_df_in_new_data)
         new_in_existing = sum(new_data_in_existing_df)
+        # If this trips consider adding verify_integrity=True to the set_index calls above.
         raise ValueError(
             f"Number of rows should be the for data to replace: {existing_in_new} -> {new_in_existing}: {columns_to_fill}"
         )
