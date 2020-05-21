@@ -44,21 +44,11 @@ def _get_interventions_df():
     return pd.DataFrame(list(interventions.items()), columns=columns)
 
 
-@lru_cache(None)
+TEST_FIELDS = [CommonFields.NEGATIVE_TESTS, CommonFields.POSITIVE_TESTS, CommonFields.STATE, CommonFields.DATE]
+
+
 def _get_testing_df():
-    # TODO: read this from a dataset class
-    ctd_df = CovidTrackingDataSource.local().data
-    # use a string for dates
-    ctd_df["date"] = ctd_df.date.apply(lambda x: x.strftime("%m/%d/%y"))
-    # handle missing data
-    # ctd_df[CovidTrackingDataSource.Fields.POSITIVE_TESTS] = ctd_df[
-    #    CovidTrackingDataSource.Fields.POSITIVE_TESTS
-    # ].apply(lambda x: x if pd.isna(x) else int(x))
-    # ctd_df[CovidTrackingDataSource.Fields.NEGATIVE_TESTS] = ctd_df[
-    #    CovidTrackingDataSource.Fields.NEGATIVE_TESTS
-    # ].apply(lambda x: x if pd.isna(x) else int(x))
-    ctd_df = ctd_df[CovidTrackingDataSource.TEST_FIELDS]
-    return ctd_df
+    return build_us_timeseries_with_all_fields().data.loc[:, TEST_FIELDS]
 
 
 def get_testing_timeseries_by_state(state):
@@ -66,8 +56,7 @@ def get_testing_timeseries_by_state(state):
     is_state = testing_df[CommonFields.AGGREGATE_LEVEL] == AggregationLevel.STATE.value
     # just select state
     return testing_df.loc[
-        is_state & (testing_df[CommonFields.STATE] == state),
-        [CommonFields.NEGATIVE_TESTS, CommonFields.POSITIVE_TESTS, CommonFields.DATE],
+        is_state & (testing_df[CommonFields.STATE] == state), TEST_FIELDS,
     ]
 
 
@@ -173,15 +162,15 @@ def get_usa_by_county_with_projection_df(input_dir, intervention_type):
     return counties
 
 
-def get_usa_by_states_df(input_dir, intervention_type):
+def get_usa_by_states_df(input_dir: str, intervention_type):
     us_only = _get_usa_by_county_df()
     interventions_df = _get_interventions_df()
     projections_df = get_state_projections_df(input_dir, intervention_type, interventions_df)
     testing_df = _get_testing_df()
     test_max_df = (
         testing_df.groupby(CommonFields.STATE)[
-            CovidTrackingDataSource.Fields.POSITIVE_TESTS,
-            CovidTrackingDataSource.Fields.NEGATIVE_TESTS,
+            CommonFields.POSITIVE_TESTS,
+            CommonFields.NEGATIVE_TESTS,
         ]
         .max()
         .reset_index()
@@ -208,8 +197,6 @@ def get_usa_by_states_df(input_dir, intervention_type):
         .merge(projections_df, on=CommonFields.STATE, how="left")
     )
     STATE_COLS_REMAP = {
-        CovidTrackingDataSource.Fields.POSITIVE_TESTS: CUMULATIVE_POSITIVE_TESTS,
-        CovidTrackingDataSource.Fields.NEGATIVE_TESTS: CUMULATIVE_NEGATIVE_TESTS,
         **OUTPUT_COLUMN_REMAP_TO_RESULT_DATA,
     }
 
@@ -227,4 +214,5 @@ def get_usa_by_states_df(input_dir, intervention_type):
     states_final.index.name = "OBJECTID"
 
     assert states_final["Combined Key"].value_counts().max() == 1
+    # XXX What is returned here?
     return states_final
