@@ -4,7 +4,10 @@ import logging
 import sentry_sdk
 from functools import lru_cache
 
-from libs.datasets.combined_datasets import build_us_latest_with_all_fields
+from libs.datasets.combined_datasets import (
+    build_us_latest_with_all_fields,
+    build_us_timeseries_with_all_fields,
+)
 from libs.us_state_abbrev import US_STATE_ABBREV
 from libs.us_state_abbrev import abbrev_us_state
 from libs.us_state_abbrev import us_fips
@@ -48,22 +51,14 @@ def _get_testing_df():
     # use a string for dates
     ctd_df["date"] = ctd_df.date.apply(lambda x: x.strftime("%m/%d/%y"))
     # handle missing data
-    #ctd_df[CovidTrackingDataSource.Fields.POSITIVE_TESTS] = ctd_df[
+    # ctd_df[CovidTrackingDataSource.Fields.POSITIVE_TESTS] = ctd_df[
     #    CovidTrackingDataSource.Fields.POSITIVE_TESTS
-    #].apply(lambda x: x if pd.isna(x) else int(x))
-    #ctd_df[CovidTrackingDataSource.Fields.NEGATIVE_TESTS] = ctd_df[
+    # ].apply(lambda x: x if pd.isna(x) else int(x))
+    # ctd_df[CovidTrackingDataSource.Fields.NEGATIVE_TESTS] = ctd_df[
     #    CovidTrackingDataSource.Fields.NEGATIVE_TESTS
-    #].apply(lambda x: x if pd.isna(x) else int(x))
+    # ].apply(lambda x: x if pd.isna(x) else int(x))
     ctd_df = ctd_df[CovidTrackingDataSource.TEST_FIELDS]
     return ctd_df
-
-
-@lru_cache(None)
-def get_cds():
-    cds_df = CDSDataset.local().data
-    cds_df["date"] = cds_df.date.apply(lambda x: x.strftime("%m/%d/%y"))
-    cds_df = cds_df[CDSDataset.TEST_FIELDS]
-    return cds_df
 
 
 def get_testing_timeseries_by_state(state):
@@ -72,25 +67,27 @@ def get_testing_timeseries_by_state(state):
         testing_df[CovidTrackingDataSource.Fields.AGGREGATE_LEVEL] == AggregationLevel.STATE.value
     )
     # just select state
-    state_testing_df = testing_df[is_state & (testing_df[CovidTrackingDataSource.Fields.STATE] == state)]
+    state_testing_df = testing_df[
+        is_state & (testing_df[CovidTrackingDataSource.Fields.STATE] == state)
+    ]
     return state_testing_df[CovidTrackingDataSource.TESTS_ONLY_FIELDS]
 
 
 def get_testing_timeseries_by_fips(fips):
     """Called by generate_api"""
-    testing_df = get_cds()
-    #build_us_timeseries_with_all_fields().
+    testing_df = build_us_timeseries_with_all_fields().data
 
     # select by fips
-    fips_testing_df = testing_df[testing_df[CDSDataset.Fields.FIPS] == fips]
+    fips_testing_df = testing_df.loc[testing_df[CommonFields.FIPS] == fips]
     before = len(fips_testing_df)
-    fips_testing_df = fips_testing_df.set_index([CDSDataset.Fields.FIPS, CDSDataset.Fields.DATE])
-    fips_testing_df = fips_testing_df[~fips_testing_df.index.duplicated(keep="last")]
+    fips_testing_df = fips_testing_df.set_index([CommonFields.FIPS, CommonFields.DATE])
+    fips_testing_df = fips_testing_df.loc[~fips_testing_df.index.duplicated(keep="last")]
     if before != len(fips_testing_df):
         _logger.warning(
             f"Testing DF contained duplicate rows for {fips}: {before} -> {len(fips_testing_df)}"
         )
         sentry_sdk.capture_message(f"Testing DF contained duplicate rows for {fips}")
+    fips_testing_df.reset_index(inplace=True)
     return fips_testing_df
 
 

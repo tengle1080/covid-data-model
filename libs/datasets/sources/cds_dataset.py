@@ -72,7 +72,9 @@ class CDSDataset(data_source.DataSource):
     ]
 
     def __init__(self, input_path):
-        data = pd.read_csv(input_path, parse_dates=[self.Fields.DATE])
+        data = pd.read_csv(
+            input_path, parse_dates=[self.Fields.DATE], dtype={self.Fields.FIPS: str}
+        )
         data = self.standardize_data(data)
         super().__init__(data)
 
