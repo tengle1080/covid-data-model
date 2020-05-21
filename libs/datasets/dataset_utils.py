@@ -243,8 +243,9 @@ def add_fips_using_county(data, fips_data) -> pd.Series:
     if len(non_matching):
         unique_counties = sorted(non_matching.county.unique())
         _logger.warning(f"Did not match {len(unique_counties)} counties to fips data.")
-        _logger.warning(f"{unique_counties}")
+        _logger.warning(f"{non_matching}")
         # TODO: Make this an error?
+
 
     # Handles if a fips column already in the dataframe.
     if "fips_r" in data.columns:
@@ -314,7 +315,7 @@ def fill_fields_with_data_source(
 
     Returns: Updated dataframe with requested columns filled from data_source data.
     """
-    new_data = data_source.set_index(index_fields)
+    new_data = data_source.set_index(index_fields, verify_integrity=True)
 
     # If no data exists, return all rows from new data with just the requested columns.
     if not len(existing_df):
@@ -322,7 +323,7 @@ def fill_fields_with_data_source(
             if column not in new_data.columns:
                 new_data[column] = None
         return new_data[columns_to_fill].reset_index()
-    existing_df = existing_df.set_index(index_fields)
+    existing_df = existing_df.set_index(index_fields, verify_integrity=True)
 
     # Sort indices so that we have chunks of equal length in the
     # correct order so that we can splice in values.
@@ -334,7 +335,13 @@ def fill_fields_with_data_source(
     new_data_in_existing_df = new_data.index.isin(existing_df.index)
 
     if not sum(existing_df_in_new_data) == sum(new_data_in_existing_df):
+        print("Intersection")
         print(new_data.loc[new_data_in_existing_df, columns_to_fill])
+        print("new data not in existing")
+        print(new_data.loc[~new_data.index.isin(existing_df.index), columns_to_fill])
+        if columns_to_fill[0] in existing_df.columns:
+            print("existing not in new")
+            print(existing_df.loc[~existing_df.index.isin(new_data.index), columns_to_fill])
         existing_in_new = sum(existing_df_in_new_data)
         new_in_existing = sum(new_data_in_existing_df)
         raise ValueError(
