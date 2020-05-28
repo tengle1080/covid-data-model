@@ -99,6 +99,7 @@ def _run_mle_fits(state=None, states_only=False):
     else:
         for state_name in ALL_STATES:
             _run_mle_fits(state=state_name, states_only=states_only)
+            # TODO: This calls _cache_global_datasets every recursive call!!!!
 
 
 def _run_ensembles(state=None, ensemble_kwargs=dict(), states_only=False):
@@ -267,11 +268,6 @@ def _build_all_for_states(
 @click.option("--states-only", default=False, is_flag=True, type=bool, help="Only model states")
 def impute_start_dates(state, states_only):
     _impute_start_dates(state, states_only)
-
-
-@entry_point.command()
-def generate_whitelist():
-    generate_whitelist()
 
 
 @entry_point.command()

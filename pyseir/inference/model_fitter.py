@@ -86,9 +86,15 @@ class ModelFitter:
         eps=0.3,
         limit_eps=[0.20, 1.2],
         error_eps=0.005,
+        eps2=0.3,
+        limit_eps2=[0.20, 1.2],
+        error_eps2=0.005,
         t_break=20,
         limit_t_break=[5, 40],
         error_t_break=1,
+        t_break2=40,
+        limit_t_break2=[20, 100],
+        error_t_break2=1,
         test_fraction=0.1,
         limit_test_fraction=[0.02, 1],
         error_test_fraction=0.02,
@@ -171,7 +177,7 @@ class ModelFitter:
         self.cases_stdev, self.hosp_stdev, self.deaths_stdev = self.calculate_observation_errors()
         self.set_inference_parameters()
 
-        self.model_fit_keys = ["R0", "eps", "t_break", "log10_I_initial"]
+        self.model_fit_keys = ["R0", "eps", "eps2", "t_break", "t_break2", "log10_I_initial"]
 
         self.SEIR_kwargs = self.get_average_seir_parameters()
         self.fit_results = None
@@ -345,7 +351,7 @@ class ModelFitter:
 
         return cases_stdev, hosp_stdev, deaths_stdev
 
-    def run_model(self, R0, eps, t_break, log10_I_initial):
+    def run_model(self, R0, eps, t_break, eps2, t_break2, log10_I_initial):
         """
         Generate the model and run.
 
@@ -367,7 +373,7 @@ class ModelFitter:
             The SEIR model that has been run.
         """
         suppression_policy = suppression_policies.generate_two_step_policy(
-            self.t_list, eps, t_break
+            self.t_list, eps, t_break, eps2, t_break2
         )
 
         if self.with_age_structure:
@@ -393,7 +399,7 @@ class ModelFitter:
         model.run()
         return model
 
-    def _fit_seir(self, R0, t0, eps, t_break, test_fraction, hosp_fraction, log10_I_initial):
+    def _fit_seir(self, R0, t0, eps, t_break, eps2, t_break2, test_fraction, hosp_fraction, log10_I_initial):
         """
         Fit SEIR model by MLE.
 
@@ -867,7 +873,7 @@ class ModelFitter:
                 model_fitter = cls(fips=fips, with_age_structure=with_age_structure)
                 try:
                     model_fitter.fit()
-                    if model_fitter.mle_model and os.environ.get("PYSEIR_PLOT_RESULTS") == "True":
+                    if model_fitter.mle_model:# and os.environ.get("PYSEIR_PLOT_RESULTS") == "True":
                         model_fitter.plot_fitting_results()
                 except RuntimeError as e:
                     logging.warning("No convergence.. Retrying " + str(e))
@@ -936,9 +942,6 @@ def run_state(state, states_only=False, with_age_structure=False):
     model_fitter = ModelFitter.run_for_fips(
         fips=state_obj.fips, with_age_structure=with_age_structure
     )
-
-    df_whitelist = load_data.load_whitelist()
-    df_whitelist = df_whitelist[df_whitelist["inference_ok"] == True]
 
     output_path = get_run_artifact_path(state_obj.fips, RunArtifact.MLE_FIT_RESULT)
     data = pd.DataFrame(model_fitter.fit_results, index=[state_obj.fips])
