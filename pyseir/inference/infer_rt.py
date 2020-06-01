@@ -1,4 +1,5 @@
 import math
+import os
 from datetime import datetime, timedelta
 import numpy as np
 import sentry_sdk
@@ -16,6 +17,7 @@ from pyseir.parameters.parameter_ensemble_generator import ParameterEnsembleGene
 from structlog.threadlocal import bind_threadlocal, clear_threadlocal, merge_threadlocal
 from structlog import configure
 from enum import Enum
+from pyseir.inference.infer_utils import LagMonitor
 
 configure(processors=[merge_threadlocal, structlog.processors.KeyValueRenderer()])
 log = structlog.get_logger(__name__)
@@ -90,6 +92,35 @@ class RtInferenceEngine:
         self.min_cases = min_cases
         self.min_deaths = min_deaths
         self.include_testing_correction = include_testing_correction
+
+        new_way = False
+        # Controls for smoothing
+        self.window_size = 14  # If Gaussian smoothing (originally was 14) - not used with alternate
+        self.alternate_smoothing = new_way  # No longer gaussian, instead Haar shaped kernel
+        self.drop_outliers_before_smoothing = (
+            new_way  # If >2 stddev from trend line, drop and resmooth
+        )
+
+        # Control Reff inference process
+        # self.min_deaths = 1000000  # so will ignore deaths - was 5
+        if self.alternate_smoothing:
+            self.process_sigma = 0.03  # Down from with change of smoothing
+        self.auto_sigma = (
+            new_way  # Automatically adjusts sigma based on (sqrt of) average median count
+        )
+        self.scale_from_median = 5000.0  # Starts adjusting sigma up as count drops below this
+        self.max_scaling = 30.0  # Maximum amount sigma can be scaled up for low counts
+        self.daily_sigma = new_way  # Adjust daily based on exponential moving average
+
+        # Temporary debugging code - TODO to be removed
+        self.debug = True
+        if self.debug:
+            self.scale_up = 1.0
+            self.debug_files_prefix = "_debug/" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            if len(fips) == 2:
+                self.debug_files_prefix += "_" + us.states.lookup(fips).name
+            os.mkdir(self.debug_files_prefix)
+            self.debug_files_prefix += "/"  # Now just add filenames below
 
         if len(fips) == 2:  # State FIPS are 2 digits
             self.agg_level = AggregationLevel.STATE
@@ -255,13 +286,64 @@ class RtInferenceEngine:
         # Remove Outliers Before Smoothing. Replaces a value if the current is more than 10 std
         # from the 14 day trailing mean and std
         timeseries = replace_outliers(pd.Series(timeseries))
-        smoothed = (
-            timeseries.rolling(
-                self.window_size, win_type="gaussian", min_periods=self.kernel_std, center=True
+
+        timeseries = pd.Series(timeseries).apply(lambda x: x * self.scale_up)  # Alex added
+
+        if self.alternate_smoothing:
+            # smoothed = timeseries.rolling(window=7, min_periods=1).mean().round()
+            # like simple moving average but smoother and still detrending
+            # Haar [1,3,6,10,15,15,15,14,12,9,5]
+            # Triangle [1, 2, 3, 4, 5, 6, 6, 5, 4, 3, 2, 1]
+            weights = np.array([1, 3, 6, 10, 15, 21, 28, 27, 25, 22, 18, 13, 7])  # Haar trailing
+            delay = int(
+                math.floor(
+                    1.0 * np.dot(weights, np.arange(len(weights) - 1, -1, -1)).sum() / weights.sum()
+                )
             )
-            .mean(std=self.kernel_std)
-            .round()
-        )
+            log.info("smoothing delay is %.2f" % delay)
+            smoothed = timeseries.rolling(window=len(weights), min_periods=1).apply(
+                lambda vals: np.dot(vals, weights[-len(vals) :]) / weights[-len(vals) :].sum()
+            )
+
+            # Drop outliers and smooth again
+            if self.drop_outliers_before_smoothing:
+                resid = (timeseries - smoothed.shift(-delay)).tail(35).head(35 - delay)
+                (resid_mean, resid_std) = (resid.mean(), resid.std())
+                z_values = resid.apply(lambda x: (x - resid_mean) / resid_std)
+
+                undo = 1.0 / (1.0 - weights[-delay] / weights.sum())
+                for index, z in z_values.items():
+                    if z > 2.0 or z < -2.0:  # Outlier to remove
+                        replace_with = (
+                            timeseries[index] - (timeseries[index] - smoothed[index]) * undo
+                        )
+                        log.warn(
+                            "Replacing outlier (z=%.2f) on day %s: %.2f -> %.2f"
+                            % (
+                                z,
+                                dates[index].strftime("%Y-%m-%d"),
+                                timeseries[index],
+                                replace_with,
+                            )
+                        )
+                        timeseries[index] = replace_with
+
+                smoothed = timeseries.rolling(window=len(weights), min_periods=1).apply(
+                    lambda vals: np.dot(vals, weights[-len(vals) :]) / weights[-len(vals) :].sum()
+                )
+            # Round as downstream analysis is not generalized to handle floats yet
+            smoothed = smoothed.round()  # .apply(lambda v: max(v, 1))
+
+            # TODO extrapolate for delay days out into future and then shift into past that many days
+            smoothed = smoothed.shift(-delay)
+        else:
+            smoothed = (
+                timeseries.rolling(
+                    self.window_size, win_type="gaussian", min_periods=self.kernel_std, center=True
+                )
+                .mean(std=self.kernel_std)
+                .round()
+            )
 
         nonzeros = [idx for idx, val in enumerate(smoothed) if val != 0]
 
@@ -276,7 +358,10 @@ class RtInferenceEngine:
         smoothed = smoothed.iloc[idx_start:]
         original = timeseries.loc[smoothed.index]
 
-        if plot:
+        if plot or self.debug:  # Alex changed
+            if self.debug:
+                fig = plt.figure(figsize=(10, 4))  # Alex added
+                plt.title("%s for %s" % (str(timeseries_type.value), self.state))
             plt.scatter(
                 dates[-len(original) :],
                 original,
@@ -288,6 +373,11 @@ class RtInferenceEngine:
             plt.xticks(rotation=30)
             plt.xlim(min(dates[-len(original) :]), max(dates) + timedelta(days=2))
             plt.legend()
+            if self.debug:  # Alex added
+                plt.savefig(
+                    self.debug_files_prefix + "apply_gaussian_filter-" + timeseries_type.value,
+                    bbox_inches="tight",
+                )
 
         return dates, times, smoothed
 
@@ -317,9 +407,35 @@ class RtInferenceEngine:
         ci_high = self.r_list[high_idx_list]
         return ci_low, ci_high
 
+    # make separate function so call call multiple times
+    def make_process_matrix(self, timeseries_scale=5000.0):
+        if self.auto_sigma and timeseries_scale is not None:
+            # New York had a median of 5000. and current sigma worked well there
+            # Worked well for Texas and Florida as well
+            use_sigma = (
+                min(
+                    self.max_scaling, max(1.0, math.sqrt(self.scale_from_median / timeseries_scale))
+                )
+                * self.process_sigma
+            )
+            # print("Adjusted sigma from %.3f to %.3f" % (self.process_sigma, use_sigma))
+        else:
+            use_sigma = self.process_sigma
+
+        process_matrix = sps.norm(loc=self.r_list, scale=use_sigma).pdf(
+            self.r_list[:, None]  # Alex added scale up
+        )
+
+        # (3a) Normalize all rows to sum to 1
+        process_matrix /= process_matrix.sum(axis=0)
+
+        return process_matrix
+
     def get_posteriors(self, timeseries_type, plot=False):
         """
         Generate posteriors for R_t.
+        TODO worth making the relatively simple generalization of using non integral (smoothed) timeseries
+             in variables lam and likelihoods (interpolate between nearest integers)?
 
         Parameters
         ----------
@@ -353,13 +469,8 @@ class RtInferenceEngine:
             columns=timeseries.index[1:],
         )
 
-        # (3) Create the Gaussian Matrix
-        process_matrix = sps.norm(loc=self.r_list, scale=self.process_sigma).pdf(
-            self.r_list[:, None]
-        )
-
-        # (3a) Normalize all rows to sum to 1
-        process_matrix /= process_matrix.sum(axis=0)
+        # (3) Create the Gaussian Matrix (but now scaled)
+        process_matrix = self.make_process_matrix(timeseries.median())
 
         # (4) Calculate the initial prior. Gamma mean of "a" with mode of "a-1".
         prior0 = sps.gamma(a=2.5).pdf(self.r_list)
@@ -379,7 +490,19 @@ class RtInferenceEngine:
         log_likelihood = 0.0
 
         # (5) Iteratively apply Bayes' rule
+
+        # Initialize scaling (for auto sigma)
+        scale = timeseries.head(1).item()
+        # Setup monitoring for Reff lagging signal in daily likelihood
+        monitor = LagMonitor(debug=False)  # Set debug=True for detailed printout of daily lag
+
         for previous_day, current_day in zip(timeseries.index[:-1], timeseries.index[1:]):
+
+            if self.daily_sigma:
+                # Calculate process matrix at each point
+                scale = 0.9 * scale + 0.1 * timeseries[current_day]
+                process_matrix = self.make_process_matrix(scale)
+
             # (5a) Calculate the new prior
             current_prior = process_matrix @ posteriors[previous_day]
 
@@ -407,18 +530,35 @@ class RtInferenceEngine:
             else:
                 posteriors[current_day] = numerator / denominator
 
+            # current_day, prev_post_am, prior_am, like_am, post_am
+            monitor.evaluate_lag_using_argmaxes(
+                current_day,
+                posteriors[previous_day].argmax(),
+                current_prior.argmax(),
+                likelihoods[current_day].argmax(),
+                numerator.argmax(),
+            )
+
             # Add to the running sum of log likelihoods
             log_likelihood += np.log(denominator)
 
         self.log_likelihood = log_likelihood
 
-        if plot:
+        if plot or self.debug:  # Alex added
             plt.figure(figsize=(12, 8))
             plt.plot(posteriors, alpha=0.1, color="k")
             plt.grid(alpha=0.4)
             plt.xlabel("$R_t$", fontsize=16)
             plt.title("Posteriors", fontsize=18)
+            if self.debug:  # Alex added
+                plt.savefig(self.debug_files_prefix + "r_t_posteriors", bbox_inches="tight")
+
         start_idx = -len(posteriors.columns)
+
+        if self.debug and True:
+            with open(self.debug_files_prefix + "reff.txt", "w") as f:
+                for v in np.argmax(posteriors.values, axis=0):
+                    f.write(str(0.02 * v) + ",\n")
 
         return dates[start_idx:], times[start_idx:], posteriors
 
@@ -459,15 +599,19 @@ class RtInferenceEngine:
             and len(hosps > 3)
         ):
             # We have converted this timeseries to new hospitalizations.
-            available_timeseries.append(TimeseriesType.NEW_HOSPITALIZATIONS)
+            if not self.debug:
+                available_timeseries.append(TimeseriesType.NEW_HOSPITALIZATIONS)
         elif (
             self.hospitalization_data_type
             is load_data.HospitalizationDataType.CUMULATIVE_HOSPITALIZATIONS
             and len(hosps > 3)
         ):
-            available_timeseries.append(TimeseriesType.NEW_HOSPITALIZATIONS)
+            if not self.debug:
+                available_timeseries.append(TimeseriesType.NEW_HOSPITALIZATIONS)
 
         for timeseries_type in available_timeseries:
+            if self.debug:
+                print("Analyzing timeseries: %s" % timeseries_type)
 
             df = pd.DataFrame()
             dates, times, posteriors = self.get_posteriors(timeseries_type)
@@ -543,7 +687,7 @@ class RtInferenceEngine:
             df_all["Rt_MAP_composite"] = df_all["Rt_MAP__new_cases"]
             df_all["Rt_ci95_composite"] = df_all["Rt_ci95__new_cases"]
 
-        if plot and df_all is not None:
+        if (plot and df_all is not None) or self.debug:
             plt.figure(figsize=(10, 6))
 
             if "Rt_MAP_composite" in df_all:
@@ -626,7 +770,10 @@ class RtInferenceEngine:
             plt.title(self.display_name, fontsize=16)
 
             output_path = get_run_artifact_path(self.fips, RunArtifact.RT_INFERENCE_REPORT)
-            plt.savefig(output_path, bbox_inches="tight")
+            if not self.debug:
+                plt.savefig(output_path, bbox_inches="tight")
+            else:
+                plt.savefig(self.debug_files_prefix + "r0_inferred", bbox_inches="tight")
             # plt.close()
         if df_all is None or df_all.empty:
             logging.warning("Inference not possible for fips: %s", self.fips)
