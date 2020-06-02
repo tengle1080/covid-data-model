@@ -131,11 +131,10 @@ def load_data_sources(
         data_source_classes.extend(classes)
     loaded_data_sources = {}
 
-    for data_source_class in data_source_classes:
-        for data_source_cls in data_source_classes:
-            # only load data source once
-            if data_source_cls not in loaded_data_sources:
-                loaded_data_sources[data_source_cls] = data_source_cls.local()
+    for data_source_cls in data_source_classes:
+        # only load data source once
+        if data_source_cls not in loaded_data_sources:
+            loaded_data_sources[data_source_cls] = data_source_cls.local()
 
     return loaded_data_sources
 
@@ -176,12 +175,13 @@ def build_combined_dataset_from_sources(
     for field, data_source_classes in feature_definition_config.items():
         for data_source_cls in data_source_classes:
             dataset = intermediate_datasets[data_source_cls]
-            data = dataset_utils.fill_fields_with_data_source(
-                log.bind(dataset_name=data_source_cls.SOURCE_NAME, field=field),
-                data,
-                dataset.data,
-                target_dataset_cls.INDEX_FIELDS,
-                [field],
-            )
+            log_dataset_field = log.bind(dataset_name=data_source_cls.SOURCE_NAME, field=field)
+            try:
+                data = dataset_utils.fill_fields_with_data_source(
+                    log_dataset_field, data, dataset.data, target_dataset_cls.INDEX_FIELDS, [field],
+                )
+            except Exception:
+                log_dataset_field.warning("Error combining data", exc_info=True)
+                raise
 
     return target_dataset_cls(data)
