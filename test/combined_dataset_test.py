@@ -1,7 +1,9 @@
 import logging
+import pathlib
 import re
 
 import pytest
+import structlog
 
 from libs.datasets import combined_datasets, CommonFields
 from libs.datasets.dataset_utils import AggregationLevel
@@ -11,6 +13,7 @@ from libs.datasets import JHUDataset
 from libs.datasets import CDSDataset
 from libs.datasets import CovidTrackingDataSource
 from libs.datasets import NevadaHospitalAssociationData
+from covidactnow.datapublic.common_df import write_df_as_csv
 
 
 # Tests to make sure that combined datasets are building data with unique indexes
@@ -28,6 +31,14 @@ def test_unique_index_values_us_latest():
     latest_data = latest.data.set_index(latest.INDEX_FIELDS)
     duplicates = latest_data.index.duplicated()
     assert not sum(duplicates)
+
+
+def test_us_timeseries_unchanged():
+    timeseries = combined_datasets.build_us_timeseries_with_all_fields()
+    timeseries_data = timeseries.data.set_index([CommonFields.FIPS, CommonFields.DATE]).sort_index()
+    with structlog.testing.capture_logs() as logs:
+        write_df_as_csv(timeseries_data, pathlib.Path("timeseries-us.csv"), structlog.get_logger())
+    assert logs == []
 
 
 # Check some counties picked arbitrarily: San Francisco/06075 and Houston (Harris County, TX)/48201
