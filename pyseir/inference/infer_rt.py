@@ -93,16 +93,16 @@ class RtInferenceEngine:
         self.min_deaths = min_deaths
         self.include_testing_correction = include_testing_correction
 
-        new_way = False
+        new_way = True
         # Controls for smoothing
-        self.window_size = 14  # If Gaussian smoothing (originally was 14) - not used with alternate
+        self.window_size = 11  # Gaussian can have any value, alternate only 7-13. Shorter windows need lower max_scaling
         self.alternate_smoothing = new_way  # No longer gaussian, instead Haar shaped kernel
         self.drop_outliers_before_smoothing = (
-            new_way  # If >2 stddev from trend line, drop and resmooth
+            True  # If >2 stddev from trend line, drop and resmooth
         )
 
         # Control Reff inference process
-        # self.min_deaths = 1000000  # so will ignore deaths - was 5
+        self.min_deaths = 1000000  # so will ignore deaths - was 5
         if self.alternate_smoothing:
             self.process_sigma = 0.03  # Down from with change of smoothing
         self.auto_sigma = (
@@ -290,16 +290,23 @@ class RtInferenceEngine:
         timeseries = pd.Series(timeseries).apply(lambda x: x * self.scale_up)  # Alex added
 
         if self.alternate_smoothing:
-            # smoothed = timeseries.rolling(window=7, min_periods=1).mean().round()
-            # like simple moving average but smoother and still detrending
-            # Haar [1,3,6,10,15,15,15,14,12,9,5]
-            # Triangle [1, 2, 3, 4, 5, 6, 6, 5, 4, 3, 2, 1]
-            weights = np.array([1, 3, 6, 10, 15, 21, 28, 27, 25, 22, 18, 13, 7])  # Haar trailing
+            # like simple moving average but smoother and still detrending (for day of week)
+            weights_by_window_size = {
+                7: [1, 1, 1, 1, 1, 1, 1],
+                8: [1, 3, 3, 3, 3, 3, 3, 2],
+                9: [1, 3, 6, 6, 6, 6, 6, 5, 3],
+                10: [1, 3, 6, 10, 10, 10, 10, 9, 7, 4],
+                11: [1, 3, 6, 10, 15, 15, 15, 14, 12, 9, 5],
+                12: [1, 3, 6, 10, 15, 21, 21, 20, 18, 15, 11, 6],
+                13: [1, 3, 6, 10, 15, 21, 28, 27, 25, 22, 18, 13, 7],
+            }
+            weights = np.array(weights_by_window_size[self.window_size])  # Haar trailing
             delay = int(
                 math.floor(
                     1.0 * np.dot(weights, np.arange(len(weights) - 1, -1, -1)).sum() / weights.sum()
                 )
             )
+
             log.info("smoothing delay is %.2f" % delay)
             smoothed = timeseries.rolling(window=len(weights), min_periods=1).apply(
                 lambda vals: np.dot(vals, weights[-len(vals) :]) / weights[-len(vals) :].sum()
@@ -380,6 +387,7 @@ class RtInferenceEngine:
                 )
 
         return dates, times, smoothed
+        # , delay
 
     def highest_density_interval(self, posteriors, ci):
         """
@@ -455,6 +463,7 @@ class RtInferenceEngine:
             Posterior estimates for each timestamp with non-zero data.
         """
         dates, times, timeseries = self.apply_gaussian_smoothing(timeseries_type)
+        # , delay
         if len(timeseries) == 0:
             return None, None, None
 
@@ -561,6 +570,7 @@ class RtInferenceEngine:
                     f.write(str(0.02 * v) + ",\n")
 
         return dates[start_idx:], times[start_idx:], posteriors
+        # , delay
 
     def infer_all(self, plot=True, shift_deaths=0):
         """
@@ -582,6 +592,7 @@ class RtInferenceEngine:
         df_all = None
         available_timeseries = []
         IDX_OF_COUNTS = 2
+        # case_delay = 0
         cases = self.get_timeseries(TimeseriesType.NEW_CASES.value)[IDX_OF_COUNTS]
         deaths = self.get_timeseries(TimeseriesType.NEW_DEATHS.value)[IDX_OF_COUNTS]
         if self.hospitalization_data_type:
@@ -615,8 +626,21 @@ class RtInferenceEngine:
 
             df = pd.DataFrame()
             dates, times, posteriors = self.get_posteriors(timeseries_type)
+            # , delay
+            # Note that the last delay days will be incorrect in posteriors now
+            # Reff for those days will be extrapolated below
+            # if timeseries_type == TimeseriesType.NEW_CASES:
+            #    case_delay = delay
+
             if posteriors is not None:
+                # rt_map = posteriors.idxmax()
+                # Replace incorrect values for the last N=delay days with extrapolation
+                # ext = extrapolate_smoothed_values(rt_map, 14, delay)
+
+                # And continue on with original processing
                 df[f"Rt_MAP__{timeseries_type.value}"] = posteriors.idxmax()
+                # rt_map
+
                 for ci in self.confidence_intervals:
                     ci_low, ci_high = self.highest_density_interval(posteriors, ci=ci)
 

@@ -92,24 +92,23 @@ class LagMonitor:
         self.last_lag = lag_after_update
 
 
-# TODO finish this - not using yet
-def extrapolate_smoothed_values(series, using_last_n, producing_n):
-    X = series.index.values  # values converts it into a numpy array
-    Y = series.values
+def extrapolate_smoothed_values(series, using_n, replacing_last_n):
+    """
+    Assumes the replacing_last_n values of the series should be replaced
+    Uses the previous using_n values to fit a straight line
+    And then extrapolates that fit to do the replacement
+    TODO somehow ensuring continuity at the transition to the fit line
+    Returning just the extrapolated part of the sequence
+    """
+    subseries = series.tail(using_n + replacing_last_n).head(using_n)
+    X = subseries.index.values  # values converts it into a numpy array
+    Y = subseries.values
 
     linear_regressor = LinearRegression()  # create object for the class
     linear_regressor.fit(X, Y)  # perform linear regression
-    pred_last_y = linear_regressor.predict(
-        lastN.tail(1).index.values.reshape(-1, 1)
-    )  # make predictions
-    pred_first_y = linear_regressor.predict(
-        lastN.head(1).index.values.reshape(-1, 1)
+    pred = linear_regressor.predict(
+        series.tail(replacing_last_n).index.values.reshape(-1, 1)
     )  # make predictions
     # print (linear_regressor.coef_[0][0], linear_regressor.intercept_[0], pred_last_y[0][0])
     # print ("dtype is",type(pred_last_y[0][0]))
-    return (
-        linear_regressor.coef_[0][0],
-        linear_regressor.intercept_[0],
-        pred_first_y[0][0].item(),
-        pred_last_y[0][0].item(),
-    )
+    return (linear_regressor.coef_[0][0], linear_regressor.intercept_[0], pred)
