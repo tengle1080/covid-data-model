@@ -17,7 +17,7 @@ from pyseir.parameters.parameter_ensemble_generator import ParameterEnsembleGene
 from structlog.threadlocal import bind_threadlocal, clear_threadlocal, merge_threadlocal
 from structlog import configure
 from enum import Enum
-from pyseir.inference.infer_utils import LagMonitor
+from pyseir.inference.infer_utils import LagMonitor, extrapolate_smoothed_values
 
 configure(processors=[merge_threadlocal, structlog.processors.KeyValueRenderer()])
 log = structlog.get_logger(__name__)
@@ -268,6 +268,8 @@ class RtInferenceEngine:
             Output integers since the reference date.
         smoothed: array-like
             Gaussian smoothed data.
+        delay: int
+            Number of days delayed (that many days at end are invalid)
 
 
         """
@@ -386,8 +388,7 @@ class RtInferenceEngine:
                     bbox_inches="tight",
                 )
 
-        return dates, times, smoothed
-        # , delay
+        return dates, times, smoothed, delay
 
     def highest_density_interval(self, posteriors, ci):
         """
@@ -461,9 +462,10 @@ class RtInferenceEngine:
             Output integers since the reference date.
         posteriors: pd.DataFrame
             Posterior estimates for each timestamp with non-zero data.
+        delay: int
+            Number of days posterior results are delayed (those last days will be incorrect)
         """
-        dates, times, timeseries = self.apply_gaussian_smoothing(timeseries_type)
-        # , delay
+        dates, times, timeseries, delay = self.apply_gaussian_smoothing(timeseries_type)
         if len(timeseries) == 0:
             return None, None, None
 
@@ -569,8 +571,7 @@ class RtInferenceEngine:
                 for v in np.argmax(posteriors.values, axis=0):
                     f.write(str(0.02 * v) + ",\n")
 
-        return dates[start_idx:], times[start_idx:], posteriors
-        # , delay
+        return dates[start_idx:], times[start_idx:], posteriors, delay
 
     def infer_all(self, plot=True, shift_deaths=0):
         """
@@ -592,7 +593,6 @@ class RtInferenceEngine:
         df_all = None
         available_timeseries = []
         IDX_OF_COUNTS = 2
-        # case_delay = 0
         cases = self.get_timeseries(TimeseriesType.NEW_CASES.value)[IDX_OF_COUNTS]
         deaths = self.get_timeseries(TimeseriesType.NEW_DEATHS.value)[IDX_OF_COUNTS]
         if self.hospitalization_data_type:
@@ -625,21 +625,17 @@ class RtInferenceEngine:
                 print("Analyzing timeseries: %s" % timeseries_type)
 
             df = pd.DataFrame()
-            dates, times, posteriors = self.get_posteriors(timeseries_type)
-            # , delay
+            dates, times, posteriors, delay = self.get_posteriors(timeseries_type)
             # Note that the last delay days will be incorrect in posteriors now
             # Reff for those days will be extrapolated below
-            # if timeseries_type == TimeseriesType.NEW_CASES:
-            #    case_delay = delay
 
             if posteriors is not None:
-                # rt_map = posteriors.idxmax()
+                rt_map = posteriors.idxmax()
                 # Replace incorrect values for the last N=delay days with extrapolation
-                # ext = extrapolate_smoothed_values(rt_map, 14, delay)
+                rt_map = extrapolate_smoothed_values(rt_map, 14, delay)
 
                 # And continue on with original processing
-                df[f"Rt_MAP__{timeseries_type.value}"] = posteriors.idxmax()
-                # rt_map
+                df[f"Rt_MAP__{timeseries_type.value}"] = rt_map
 
                 for ci in self.confidence_intervals:
                     ci_low, ci_high = self.highest_density_interval(posteriors, ci=ci)

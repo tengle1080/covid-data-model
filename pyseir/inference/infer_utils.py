@@ -101,14 +101,24 @@ def extrapolate_smoothed_values(series, using_n, replacing_last_n):
     Returning just the extrapolated part of the sequence
     """
     subseries = series.tail(using_n + replacing_last_n).head(using_n)
-    X = subseries.index.values  # values converts it into a numpy array
-    Y = subseries.values
 
-    linear_regressor = LinearRegression()  # create object for the class
+    # Need these so can adjust last valid point to be 0.,0.
+    last_x = series.index.values[-replacing_last_n - 1]
+    last_y = series.values[-replacing_last_n - 1]
+
+    # Scale so last point is at 0.,0.
+    X = np.array(list(map(lambda d: float(d - last_x), subseries.index.values))).reshape(
+        -1, 1
+    )  # expects 2d array for X
+    Y = subseries.values - last_y
+
+    linear_regressor = LinearRegression(
+        fit_intercept=False
+    )  # forcing y intercept to be 0. making line fit last point
     linear_regressor.fit(X, Y)  # perform linear regression
-    pred = linear_regressor.predict(
-        series.tail(replacing_last_n).index.values.reshape(-1, 1)
-    )  # make predictions
-    # print (linear_regressor.coef_[0][0], linear_regressor.intercept_[0], pred_last_y[0][0])
-    # print ("dtype is",type(pred_last_y[0][0]))
-    return (linear_regressor.coef_[0][0], linear_regressor.intercept_[0], pred)
+    (m, b) = (linear_regressor.coef_[0], linear_regressor.intercept_)
+
+    ext = series.copy()
+    for x in series.tail(replacing_last_n).index.values:
+        ext._set_value(x, last_y + m * (x - last_x))
+    return ext
