@@ -1,8 +1,10 @@
+from contextlib import contextmanager
 from typing import Dict, Type, List, NewType
 import logging
 import functools
 import pandas as pd
 import structlog
+from structlog import BoundLoggerBase
 
 from libs.datasets import dataset_utils
 from libs.datasets import dataset_base
@@ -140,6 +142,16 @@ def load_data_sources(
     return loaded_data_sources
 
 
+@contextmanager
+def bound_log(log_original: BoundLoggerBase, **kwargs) -> BoundLoggerBase:
+    log = log_original.bind(**kwargs)
+    try:
+        yield log
+    except Exception:
+        log.exception("Context captured from stack", exc_info=True)
+        raise
+
+
 def build_combined_dataset_from_sources(
     target_dataset_cls: Type[dataset_base.DatasetBase],
     feature_definition_config: FeatureDataSourceMap,
@@ -174,14 +186,11 @@ def build_combined_dataset_from_sources(
     # structlog makes it very easy to bind extra attributes to `log` as it is passed down the stack.
     log = structlog.get_logger()
     for field, data_source_classes in feature_definition_config.items():
-        for data_source_cls in data_source_classes:
-            dataset = intermediate_datasets[data_source_cls]
-            data = dataset_utils.fill_fields_with_data_source(
-                log.bind(dataset_name=data_source_cls.SOURCE_NAME, field=field),
-                data,
-                dataset.data,
-                target_dataset_cls.INDEX_FIELDS,
-                [field],
-            )
+        with bound_log(log, dataset_name=data_source_cls.SOURCE_NAME, field=field) as log:
+            for data_source_cls in data_source_classes:
+                dataset = intermediate_datasets[data_source_cls]
+                data = dataset_utils.fill_fields_with_data_source(
+                    log, data, dataset.data, target_dataset_cls.INDEX_FIELDS, [field]
+                )
 
     return target_dataset_cls(data)

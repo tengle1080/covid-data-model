@@ -337,9 +337,9 @@ def fill_fields_and_timeseries_from_column(
         # From here down treat the date as part of the index label for joining rows of existing_df and new_df
         index_fields.append(date_field)
 
-    new_df.set_index(index_fields, inplace=True)
+    new_df.set_index(index_fields, inplace=True, verify_integrity=True)
     if not existing_df.empty:
-        existing_df.set_index(index_fields, inplace=True)
+        existing_df.set_index(index_fields, inplace=True, verify_integrity=True)
         common_labels = existing_df.index.intersection(new_df.index)
     else:
         # Treat an empty existing_df the same as one that has no rows in common with new_df
@@ -368,9 +368,14 @@ def fill_fields_and_timeseries_from_column(
     # Revert 'fips', 'state' etc back to regular columns
     existing_df.reset_index(inplace=True)
     missing_new_data.reset_index(inplace=True)
+    merged = pd.concat([existing_df, missing_new_data], ignore_index=True)
+    dups = merged.groupby(index_fields).size().loc[lambda x: x > 1, :]
+    if not dups.empty:
+        log.warning("Bad data", dups=dups)
+        raise ValueError("Bad Data")
 
     # Concat the existing data with new rows from new_data, creating a new integer index
-    return pd.concat([existing_df, missing_new_data], ignore_index=True)
+    return merged
 
 
 def fill_fields_with_data_source(

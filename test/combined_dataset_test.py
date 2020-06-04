@@ -13,12 +13,15 @@ from libs.datasets import JHUDataset
 from libs.datasets import CDSDataset
 from libs.datasets import CovidTrackingDataSource
 from libs.datasets import NevadaHospitalAssociationData
-from covidactnow.datapublic.common_df import write_df_as_csv
+from covidactnow.datapublic.common_df import write_df_as_csv, read_csv_to_indexed_df
 
 
 # Tests to make sure that combined datasets are building data with unique indexes
 # If this test is failing, it means that there is one of the data sources that
 # is returning multiple values for a single row.
+from test.dataset_utils_test import to_dict
+
+
 def test_unique_index_values_us_timeseries():
     timeseries = combined_datasets.build_us_timeseries_with_all_fields()
     timeseries_data = timeseries.data.set_index(timeseries.INDEX_FIELDS)
@@ -34,11 +37,18 @@ def test_unique_index_values_us_latest():
 
 
 def test_us_timeseries_unchanged():
+    keys = [CommonFields.FIPS, CommonFields.DATE]
     timeseries = combined_datasets.build_us_timeseries_with_all_fields()
-    timeseries_data = timeseries.data.set_index([CommonFields.FIPS, CommonFields.DATE]).sort_index()
-    with structlog.testing.capture_logs() as logs:
-        write_df_as_csv(timeseries_data, pathlib.Path("timeseries-us.csv"), structlog.get_logger())
-    assert logs == []
+    timeseries_data = timeseries.data.set_index(keys, verify_integrity=True).sort_index()
+    path = pathlib.Path("timeseries-us.csv")
+    if path.is_file():
+        existing_data = read_csv_to_indexed_df(path)
+        assert to_dict(keys, existing_data) == to_dict(keys, timeseries_data)
+    else:
+        with structlog.testing.capture_logs() as logs:
+            write_df_as_csv(timeseries_data, path, structlog.get_logger())
+        assert logs == []
+        assert False, "No existing data"
 
 
 # Check some counties picked arbitrarily: San Francisco/06075 and Houston (Harris County, TX)/48201
