@@ -76,7 +76,7 @@ class ModelFitter:
 
     DEFAULT_FIT_PARAMS = dict(
         R0=3.4,
-        limit_R0=[2, 4.5],
+        limit_R0=[1.5, 4.5],
         error_R0=0.05,
         log10_I_initial=1,
         limit_log10_I_initial=[0.333, 2],
@@ -85,13 +85,13 @@ class ModelFitter:
         limit_t0=[10, 80],
         error_t0=2.0,
         eps=0.3,
-        limit_eps=[0.20, 1.2],
+        limit_eps=[0.10, 1.2],
         error_eps=0.005,
         t_break=20,
         limit_t_break=[5, 40],
         error_t_break=1,
         eps2=0.3,
-        limit_eps2=[0.20, 1.2],
+        limit_eps2=[0.10, 1.2],
         error_eps2=0.005,
         t_delta_phases=14,  # number of days between second and third ramps
         limit_t_delta_phases=[14, 60],  # good as of June 3, 2020 may need to update in the future
