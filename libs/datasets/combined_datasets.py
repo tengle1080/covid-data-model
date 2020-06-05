@@ -186,11 +186,17 @@ def build_combined_dataset_from_sources(
     # structlog makes it very easy to bind extra attributes to `log` as it is passed down the stack.
     log = structlog.get_logger()
     for field, data_source_classes in feature_definition_config.items():
-        with bound_log(log, dataset_name=data_source_cls.SOURCE_NAME, field=field) as log:
-            for data_source_cls in data_source_classes:
+        for data_source_cls in data_source_classes:
+            with bound_log(log, dataset_name=data_source_cls.SOURCE_NAME, field=field) as log:
                 dataset = intermediate_datasets[data_source_cls]
                 data = dataset_utils.fill_fields_with_data_source(
                     log, data, dataset.data, target_dataset_cls.INDEX_FIELDS, [field]
                 )
+                data.set_index(target_dataset_cls.INDEX_FIELDS, verify_integrity=True)
+                grp_sizes = data.groupby([CommonFields.FIPS, CommonFields.DATE]).size()[
+                    lambda x: x > 1
+                ]
+                if not grp_sizes.empty:
+                    raise ValueError(f"Duplicates found: {grp_sizes}")
 
     return target_dataset_cls(data)
