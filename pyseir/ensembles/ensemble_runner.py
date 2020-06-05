@@ -404,7 +404,7 @@ class EnsembleRunner:
         Returns
         -------
         outputs: dict
-            Output data for this suppression policc ensemble.
+            Output data for this suppression policy ensemble.
         """
         outputs = defaultdict(dict)
         outputs["t_list"] = model_ensemble[0].t_list.tolist()
