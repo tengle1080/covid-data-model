@@ -127,7 +127,7 @@ class ModelFitter:
 
         self.fips = fips
         self.ref_date = ref_date
-        self.three_stage = True
+        self.three_stage = False
         # self.max_fit_date = (dt.date.today() - timedelta(days=7) - ref_date.date()).days  # natasha
         self.days_since_ref_date = (dt.date.today() - ref_date.date()).days
         self.future_days_allowed = (
