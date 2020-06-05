@@ -127,6 +127,7 @@ class ModelFitter:
 
         self.fips = fips
         self.ref_date = ref_date
+        self.three_stage = True
         # self.max_fit_date = (dt.date.today() - timedelta(days=7) - ref_date.date()).days  # natasha
         self.days_since_ref_date = (dt.date.today() - ref_date.date()).days
         self.future_days_allowed = (
@@ -385,7 +386,9 @@ class ModelFitter:
         model: SEIRModel
             The SEIR model that has been run.
         """
-
+        if self.three_stage == False:
+            eps2 = -1  # this makes the epsilon generator return two stages instead of three
+            t_delta_phases = -1
         suppression_policy = suppression_policies.get_epsilon_interpolator(
             eps, t_break, eps2, t_delta_phases
         )
@@ -798,24 +801,25 @@ class ModelFitter:
             label="Estimated Intervention",
         )
 
-        start_intervention2_date = (
-            self.ref_date
-            + timedelta(
-                days=self.fit_results["t_break"]
-                + self.fit_results["t_delta_phases"]
-                + self.fit_results["t0"]
+        if self.three_stage == True:
+            start_intervention2_date = (
+                self.ref_date
+                + timedelta(
+                    days=self.fit_results["t_break"]
+                    + self.fit_results["t_delta_phases"]
+                    + self.fit_results["t0"]
+                )
+                + timedelta(days=14)
             )
-            + timedelta(days=14)
-        )
-        stop_intervention2_date = start_intervention2_date + timedelta(days=14)
+            stop_intervention2_date = start_intervention2_date + timedelta(days=14)
 
-        plt.fill_betweenx(
-            [y_lim[0], y_lim[1]],
-            [start_intervention2_date, start_intervention2_date],
-            [stop_intervention2_date, stop_intervention2_date],
-            alpha=0.2,
-            label="Estimated Intervention2",
-        )
+            plt.fill_betweenx(
+                [y_lim[0], y_lim[1]],
+                [start_intervention2_date, start_intervention2_date],
+                [stop_intervention2_date, stop_intervention2_date],
+                alpha=0.2,
+                label="Estimated Intervention2",
+            )
 
         running_total = timedelta(days=0)
         for i_label, k in enumerate(

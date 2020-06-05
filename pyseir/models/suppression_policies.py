@@ -217,13 +217,20 @@ def get_epsilon_interpolator(
     TIMEBOUNDARY = 100000
 
     # List of points (time, epsilon value) where transitions will occur
-    points = [
-        (0, 1),
-        (t_break, 1),
-        (t_break + transition_time, eps),
-        (t_break + transition_time + t_delta_phases, eps),
-        (t_break + transition_time + t_delta_phases + transition_time, eps2),
-    ]
+    if eps2 != -1:  # compute three stage model
+        points = [
+            (0, 1),
+            (t_break, 1),
+            (t_break + transition_time, eps),
+            (t_break + transition_time + t_delta_phases, eps),
+            (t_break + transition_time + t_delta_phases + transition_time, eps2),
+        ]
+    else:  # compute two stage model
+        points = [
+            (0, 1),
+            (t_break, 1),
+            (t_break + transition_time, eps),
+        ]
 
     # For estimating future trajectories we can either use the last fitted value or pass in
     # another value to the SEIR model.
