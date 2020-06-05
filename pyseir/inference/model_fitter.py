@@ -130,9 +130,9 @@ class ModelFitter:
         # self.max_fit_date = (dt.date.today() - timedelta(days=7) - ref_date.date()).days  # natasha
         self.days_since_ref_date = (dt.date.today() - ref_date.date()).days
         self.future_days_allowed = (
-            7  # number of future days allowed in second ramp period without penalty on chi2 score
+            0  # number of future days allowed in second ramp period without penalty on chi2 score
         )
-        self.max_future_days_fitted = 14  # number of future days to allowed to be fitted, days beyond future_days_allowed are penalized
+        self.max_future_days_fitted = 0  # number of future days to allowed to be fitted, days beyond future_days_allowed are penalized
         self.min_deaths = min_deaths
         self.t_list = np.linspace(0, int(365 * n_years), int(365 * n_years) + 1)
         self.cases_to_deaths_err_factor = cases_to_deaths_err_factor
@@ -463,7 +463,7 @@ class ModelFitter:
 
         # If using more future days than allowed, updated future_days_penalty
         if number_of_future_days_used > self.future_days_allowed:
-            future_days_penalty = number_of_future_days_used
+            future_days_penalty = 10 * number_of_future_days_used
 
         # Only run fit when last_data_point_ramp_2 does not use more than max_future_days_fitted
         # if last_data_point_ramp_2 < self.days_since_ref_date + self.max_future_days_fitted:
