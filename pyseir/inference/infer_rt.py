@@ -79,9 +79,17 @@ class RtInferenceEngine:
         min_cases=5,
         min_deaths=5,
         include_testing_correction=True,
+        profile_name="new_smoothing_full_auto",  # TODO add definitions of profiles
     ):
+<<<<<<< HEAD
         np.random.seed(InferRtConstants.RNG_SEED)
         # Param Generation used for Xcor in align_time_series, has some stochastic FFT elements.
+=======
+
+        np.random.seed(
+            NP_SEED
+        )  # Xcor, used in align_time_series,  has some stochastic FFT elements.
+>>>>>>> not rounding appears to work and more flags addded
         self.fips = fips
         self.r_list = r_list
         self.window_size = window_size
@@ -93,24 +101,89 @@ class RtInferenceEngine:
         self.min_deaths = min_deaths
         self.include_testing_correction = include_testing_correction
 
-        new_way = True
+        profiles = {
+            "original": {
+                "alternate_smoothing": False,
+                "drop_outliers_before_smoothing": False,
+                "auto_sigma": False,
+                "daily_sigma": False,
+            },
+            "cases_only_new_smoothing_full_auto": {
+                "alternate_smoothing": True,
+                "window_size": 11,
+                "drop_outliers_before_smoothing": True,
+                "disable_deaths": True,
+                "auto_sigma": True,
+                "process_sigma": 0.03,
+                "max_scaling": 30.0,
+                "daily_sigma": True,
+            },
+            "new_smoothing_full_auto": {
+                "alternate_smoothing": True,
+                "window_size": 11,
+                "drop_outliers_before_smoothing": True,
+                "disable_deaths": False,
+                "avoid_rounding": True,
+                "auto_sigma": True,
+                "process_sigma": 0.03,
+                "max_scaling": 30.0,
+                "daily_sigma": True,
+            },
+        }
+        if profile_name not in profiles:
+            profile_name = "original"
+        profile = profiles[profile_name]
+
         # Controls for smoothing
-        self.window_size = 11  # Gaussian can have any value, alternate only 7-13. Shorter windows need lower max_scaling
-        self.alternate_smoothing = new_way  # No longer gaussian, instead Haar shaped kernel
+
+        # Gaussian can have any value, alternate only 7-13. Shorter windows need lower max_scaling
+        if "window_size" in profile:
+            self.window_size = profile["window_size"]
+
+        # No longer gaussian, instead Haar shaped kernel
+        self.alternate_smoothing = (
+            profile["alternate_smoothing"] if "alternate_smoothing" in profile else False
+        )
+
+        # If >2 stddev from trend line, drop and resmooth
         self.drop_outliers_before_smoothing = (
-            True  # If >2 stddev from trend line, drop and resmooth
+            profile["drop_outliers_before_smoothing"]
+            if "drop_outliers_before_smoothing" in profile
+            else False
         )
 
         # Control Reff inference process
-        self.min_deaths = 1000000  # so will ignore deaths - was 5
-        if self.alternate_smoothing:
-            self.process_sigma = 0.03  # Down from with change of smoothing
-        self.auto_sigma = (
-            new_way  # Automatically adjusts sigma based on (sqrt of) average median count
-        )
-        self.scale_from_median = 5000.0  # Starts adjusting sigma up as count drops below this
-        self.max_scaling = 30.0  # Maximum amount sigma can be scaled up for low counts
-        self.daily_sigma = new_way  # Adjust daily based on exponential moving average
+
+        # Ignore deaths in Reff inferencing
+        if "disable_deaths" in profile and profile["disable_deaths"]:
+            self.min_deaths = 1000000  # normally 5
+
+        # Avoid rounding timeseries and interpolate for likelihoods
+        self.avoid_rounding = profile["avoid_rounding"] if "avoid_rounding" in profile else False
+        if self.avoid_rounding:
+            self.min_deaths = min(1.0, self.min_deaths)
+            self.min_cases = min(1.0, self.min_deaths)
+
+        # Adjust base process sigma if alternate smoothing
+        if self.alternate_smoothing and profile["process_sigma"]:
+            self.process_sigma = profile["process_sigma"]
+
+        # Automatically adjusts sigma based on (sqrt of) average median count
+        self.auto_sigma = profile["auto_sigma"] if "auto_sigma" in profile else False
+
+        if self.auto_sigma:
+            # Starts adjusting sigma up as count drops below this
+            self.scale_from_median = (
+                profile["scale_from_median"] if "scale_from_median" in profile else 5000.0
+            )
+
+            # Maximum amount sigma can be scaled up for low counts
+            self.max_scaling = profile["max_scaling"] if "max_scaling" in profile else 30.0
+
+            # Adjust daily based on exponential moving average
+            self.daily_sigma = profile["daily_sigma"] if "daily_sigma" in profile else True
+        else:
+            self.daily_sigma = False
 
         # Temporary debugging code - TODO to be removed
         self.debug = True
@@ -315,8 +388,13 @@ class RtInferenceEngine:
             )
 
             # Drop outliers and smooth again
-            if self.drop_outliers_before_smoothing:
-                resid = (timeseries - smoothed.shift(-delay)).tail(35).head(35 - delay)
+            drop_for_last = min(60, len(smoothed))
+            if self.drop_outliers_before_smoothing and max(smoothed.tail(drop_for_last)) > 20:
+                resid = (
+                    (timeseries - smoothed.shift(-delay))
+                    .tail(drop_for_last)
+                    .head(drop_for_last - delay)
+                )
                 (resid_mean, resid_std) = (resid.mean(), resid.std())
                 z_values = resid.apply(lambda x: (x - resid_mean) / resid_std)
 
@@ -340,8 +418,6 @@ class RtInferenceEngine:
                 smoothed = timeseries.rolling(window=len(weights), min_periods=1).apply(
                     lambda vals: np.dot(vals, weights[-len(vals) :]) / weights[-len(vals) :].sum()
                 )
-            # Round as downstream analysis is not generalized to handle floats yet
-            smoothed = smoothed.round()  # .apply(lambda v: max(v, 1))
 
             # TODO extrapolate for delay days out into future and then shift into past that many days
             smoothed = smoothed.shift(-delay)
@@ -349,12 +425,15 @@ class RtInferenceEngine:
             smoothed = (
                 timeseries.rolling(
                     self.window_size, win_type="gaussian", min_periods=self.kernel_std, center=True
-                )
-                .mean(std=self.kernel_std)
-                .round()
+                ).mean(std=self.kernel_std)
+                # .round() - removed as doing later
             )
+            delay = 0
 
-        nonzeros = [idx for idx, val in enumerate(smoothed) if val != 0]
+        if not self.avoid_rounding:
+            smoothed = smoothed.round()
+
+        nonzeros = [idx for idx, val in enumerate(smoothed.round()) if val != 0]
 
         if smoothed.empty:
             idx_start = 0
@@ -367,7 +446,7 @@ class RtInferenceEngine:
         smoothed = smoothed.iloc[idx_start:]
         original = timeseries.loc[smoothed.index]
 
-        if plot or self.debug:  # Alex changed
+        if (plot or self.debug) and len(smoothed) > 0:  # Alex changed
             if self.debug:
                 fig = plt.figure(figsize=(10, 4))  # Alex added
                 plt.title("%s for %s" % (str(timeseries_type.value), self.state))
@@ -438,7 +517,7 @@ class RtInferenceEngine:
         # (3a) Normalize all rows to sum to 1
         process_matrix /= process_matrix.sum(axis=0)
 
-        return process_matrix
+        return (use_sigma, process_matrix)
 
     def get_posteriors(self, timeseries_type, plot=False):
         """
@@ -467,21 +546,39 @@ class RtInferenceEngine:
         """
         dates, times, timeseries, delay = self.apply_gaussian_smoothing(timeseries_type)
         if len(timeseries) == 0:
-            return None, None, None
+            return None, None, None, None
 
         # (1) Calculate Lambda (the Poisson likelihood given the data) based on
         # the observed increase from t-1 cases to t cases.
         lam = timeseries[:-1].values * np.exp((self.r_list[:, None] - 1) / self.serial_period)
 
         # (2) Calculate each day's likelihood over R_t
-        likelihoods = pd.DataFrame(
-            data=sps.poisson.pmf(timeseries[1:].values, lam),
-            index=self.r_list,
-            columns=timeseries.index[1:],
-        )
+        if not self.avoid_rounding:  # use rounded values
+            timeseries = timeseries.round()
+            likelihoods = pd.DataFrame(
+                data=sps.poisson.pmf(timeseries[1:].values, lam),
+                index=self.r_list,
+                columns=timeseries.index[1:],
+            )
+        else:
+            ts_floor = timeseries.apply(np.floor)
+            ts_ceil = timeseries.apply(np.ceil)
+            ts_frac = timeseries - ts_floor
+
+            likelihoods_floor = pd.DataFrame(
+                data=sps.poisson.pmf(ts_floor[1:].values, lam),
+                index=self.r_list,
+                columns=timeseries.index[1:],
+            )
+            likelihoods_ceil = pd.DataFrame(
+                data=sps.poisson.pmf(ts_ceil[1:].values, lam),
+                index=self.r_list,
+                columns=timeseries.index[1:],
+            )
+            likelihoods = ts_frac * likelihoods_ceil + (1 - ts_frac) * likelihoods_floor
 
         # (3) Create the Gaussian Matrix (but now scaled)
-        process_matrix = self.make_process_matrix(timeseries.median())
+        (current_sigma, process_matrix) = self.make_process_matrix(timeseries.median())
 
         # (4) Calculate the initial prior. Gamma mean of "a" with mode of "a-1".
         prior0 = sps.gamma(a=2.5).pdf(self.r_list)
@@ -512,7 +609,7 @@ class RtInferenceEngine:
             if self.daily_sigma:
                 # Calculate process matrix at each point
                 scale = 0.9 * scale + 0.1 * timeseries[current_day]
-                process_matrix = self.make_process_matrix(scale)
+                (current_sigma, process_matrix) = self.make_process_matrix(scale)
 
             # (5a) Calculate the new prior
             current_prior = process_matrix @ posteriors[previous_day]
@@ -544,6 +641,7 @@ class RtInferenceEngine:
             # current_day, prev_post_am, prior_am, like_am, post_am
             monitor.evaluate_lag_using_argmaxes(
                 current_day,
+                current_sigma,
                 posteriors[previous_day].argmax(),
                 current_prior.argmax(),
                 likelihoods[current_day].argmax(),
@@ -671,7 +769,11 @@ class RtInferenceEngine:
                     shift_in_days = self.align_time_series(series_a=series_a, series_b=series_b,)
 
                     df_all[f"lag_days__{timeseries_type.value}"] = shift_in_days
+<<<<<<< HEAD
                     logging.debug(
+=======
+                    log.info(
+>>>>>>> not rounding appears to work and more flags addded
                         "Using timeshift of: %s for timeseries type: %s ",
                         shift_in_days,
                         timeseries_type,

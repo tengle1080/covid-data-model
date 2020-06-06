@@ -27,7 +27,9 @@ class LagMonitor:
         self.max_lag = 0
         self.total_lag = 0
 
-    def evaluate_lag_using_argmaxes(self, current_day, prev_post_am, prior_am, like_am, post_am):
+    def evaluate_lag_using_argmaxes(
+        self, current_day, current_sigma, prev_post_am, prior_am, like_am, post_am
+    ):
         # Test if there is lag by checking whether pull of consistent likelihood in one direction
         # can move the value fast enough (as determined by sigma). Looking at argmax values of
         # previous posterior/current prior, current likelihood and current posterior
@@ -65,10 +67,11 @@ class LagMonitor:
             if len(self.lag_days_running) >= self.days_threshold:  # Need 3 days running to warn
                 length = len(self.lag_days_running)
                 log.warn(
-                    "Reff lagged likelihood (max = %.2f, mean = %.2f) for %d days (from %d to %d)"
+                    "Reff lagged likelihood (max = %.2f, mean = %.2f) with sigma %.3f for %d days (from %d to %d)"
                     % (
                         0.02 * self.max_lag,
                         0.02 * self.total_lag / length,
+                        current_sigma,
                         length,
                         current_day - length,
                         current_day,
