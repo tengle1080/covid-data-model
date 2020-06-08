@@ -114,6 +114,7 @@ def _run_mle_fits(state=None, states_only=False):
 
 def _run_ensembles(state=None, ensemble_kwargs=dict(), states_only=False):
     if state:
+        # TODO: Rename this so it's clear it's coming from ensemble runner
         run_state(state, ensemble_kwargs=ensemble_kwargs, states_only=states_only)
     else:
         for state_name in ALL_STATES:

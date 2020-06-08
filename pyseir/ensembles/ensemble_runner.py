@@ -130,7 +130,7 @@ class EnsembleRunner:
 
         self.suppression_policies = None
         self.override_params = dict()
-        self.init_run_mode()
+        self.init_run_mode()  # This overwrites self.suppression_policies
 
         self.all_outputs = {}
 
@@ -249,7 +249,7 @@ class EnsembleRunner:
 
     def run_ensemble(self):
         """
-        Run an ensemble of models for each suppression policy nad generate the
+        Run an ensemble of models for each suppression policy and generate the
         output report / results dataset.
         """
         for suppression_policy_name, suppression_policy in self.suppression_policies.items():
