@@ -129,9 +129,9 @@ class ModelFitter:
         self.ref_date = ref_date
         self.three_stage = True
         # self.max_fit_date = (dt.date.today() - timedelta(days=7) - ref_date.date()).days  # natasha
-        self.days_since_ref_date = (dt.date.today() - ref_date.date() - timedelta(days=7)).days
+        self.days_since_ref_date = (dt.date.today() - ref_date.date() - timedelta(days=14)).days
         self.future_days_allowed = (
-            0  # number of future days allowed in second ramp period without penalty on chi2 score
+            0  # number of future days allowed in second ramp period without penalty on chi2 Score
         )
         self.max_future_days_fitted = 0  # number of future days to allowed to be fitted, days beyond future_days_allowed are penalized
         self.min_deaths = min_deaths
