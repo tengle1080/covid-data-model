@@ -79,7 +79,7 @@ class RtInferenceEngine:
         min_cases=5,
         min_deaths=5,
         include_testing_correction=True,
-        profile_name="new_smoothing_full_auto",  # TODO add definitions of profiles
+        profile_name="cases_only_new_smoothing_full_auto",  # TODO add definitions of profiles
     ):
 <<<<<<< HEAD
         np.random.seed(InferRtConstants.RNG_SEED)
@@ -101,6 +101,7 @@ class RtInferenceEngine:
         self.min_deaths = min_deaths
         self.include_testing_correction = include_testing_correction
 
+        # Put these elsewhere or remove once we've settled on what to go forward with
         profiles = {
             "original": {
                 "alternate_smoothing": False,
@@ -113,15 +114,17 @@ class RtInferenceEngine:
                 "window_size": 11,
                 "drop_outliers_before_smoothing": True,
                 "disable_deaths": True,
+                "avoid_rounding": True,
                 "auto_sigma": True,
                 "process_sigma": 0.03,
                 "max_scaling": 30.0,
                 "daily_sigma": True,
+                "extrapolation_window_size": 14,
             },
             "new_smoothing_full_auto": {
                 "alternate_smoothing": True,
                 "window_size": 11,
-                "drop_outliers_before_smoothing": True,
+                "drop_outliers_before_smoothing": False,
                 "disable_deaths": False,
                 "avoid_rounding": True,
                 "auto_sigma": True,
@@ -134,35 +137,42 @@ class RtInferenceEngine:
             profile_name = "original"
         profile = profiles[profile_name]
 
+        #########################################################
         # Controls for smoothing
 
         # Gaussian can have any value, alternate only 7-13. Shorter windows need lower max_scaling
         if "window_size" in profile:
             self.window_size = profile["window_size"]
 
-        # No longer gaussian, instead Haar shaped kernel
+        # No longer gaussian, instead Haar shaped kernel (see weights below)
+        # Not centered so causes smoothing delay which is adjusted for
         self.alternate_smoothing = (
             profile["alternate_smoothing"] if "alternate_smoothing" in profile else False
         )
 
-        # If >2 stddev from trend line, drop and resmooth
+        # If >2 stddev from trend line, adjust to trend and then resmooth the adjusted data
         self.drop_outliers_before_smoothing = (
             profile["drop_outliers_before_smoothing"]
             if "drop_outliers_before_smoothing" in profile
             else False
         )
 
+        # See also avoid rounding below
+
+        #########################################################
         # Control Reff inference process
 
         # Ignore deaths in Reff inferencing
-        if "disable_deaths" in profile and profile["disable_deaths"]:
+        self.disable_deaths = profile["disable_deaths"] if "disable_deaths" in profile else False
+        if self.disable_deaths:
             self.min_deaths = 1000000  # normally 5
 
         # Avoid rounding timeseries and interpolate for likelihoods
         self.avoid_rounding = profile["avoid_rounding"] if "avoid_rounding" in profile else False
         if self.avoid_rounding:
-            self.min_deaths = min(1.0, self.min_deaths)
-            self.min_cases = min(1.0, self.min_deaths)
+            if not self.disable_deaths:
+                self.min_deaths = min(1.0, self.min_deaths)
+            self.min_cases = min(1.0, self.min_cases)
 
         # Adjust base process sigma if alternate smoothing
         if self.alternate_smoothing and profile["process_sigma"]:
@@ -185,11 +195,22 @@ class RtInferenceEngine:
         else:
             self.daily_sigma = False
 
+        # Reff for last <delay> days has to be extrapolated.
+        # Set the size of the linear regression window used
+        self.extrapolation_window_size = (
+            profile["extrapolation_window_size"] if "extrapolation_window_size" in profile else 14
+        )
+
         # Temporary debugging code - TODO to be removed
+        # This probably won't work right as with counties
         self.debug = True
+        debug_dir = "_debug/"
         if self.debug:
             self.scale_up = 1.0
-            self.debug_files_prefix = "_debug/" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+            if not os.path.isdir(debug_dir):
+                print("making %s directory to store debug output in" % debug_dir)
+                os.mkdir(debug_dir)
+            self.debug_files_prefix = debug_dir + "/" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
             if len(fips) == 2:
                 self.debug_files_prefix += "_" + us.states.lookup(fips).name
             os.mkdir(self.debug_files_prefix)
@@ -389,18 +410,19 @@ class RtInferenceEngine:
 
             # Drop outliers and smooth again
             drop_for_last = min(60, len(smoothed))
-            if self.drop_outliers_before_smoothing and max(smoothed.tail(drop_for_last)) > 20:
+            if self.drop_outliers_before_smoothing:
                 resid = (
                     (timeseries - smoothed.shift(-delay))
                     .tail(drop_for_last)
                     .head(drop_for_last - delay)
                 )
-                (resid_mean, resid_std) = (resid.mean(), resid.std())
+                # Put a minimum on stddev to be cautious removing points
+                (resid_mean, resid_std) = (resid.mean(), max(resid.std(), 2.0))
                 z_values = resid.apply(lambda x: (x - resid_mean) / resid_std)
 
                 undo = 1.0 / (1.0 - weights[-delay] / weights.sum())
                 for index, z in z_values.items():
-                    if z > 2.0 or z < -2.0:  # Outlier to remove
+                    if z > 2.0 or z < -2.0 and smoothed[index] > 5:  # Outlier to remove
                         replace_with = (
                             timeseries[index] - (timeseries[index] - smoothed[index]) * undo
                         )
@@ -466,6 +488,12 @@ class RtInferenceEngine:
                     self.debug_files_prefix + "apply_gaussian_filter-" + timeseries_type.value,
                     bbox_inches="tight",
                 )
+
+        # Store some data for later use
+        self.smoothing_delay_days = delay
+        if not hasattr(self, "smoothed_timeseries"):
+            self.smoothed_timeseries = dict()
+        self.smoothed_timeseries[timeseries_type] = smoothed
 
         return dates, times, smoothed, delay
 
@@ -544,7 +572,12 @@ class RtInferenceEngine:
         delay: int
             Number of days posterior results are delayed (those last days will be incorrect)
         """
-        dates, times, timeseries, delay = self.apply_gaussian_smoothing(timeseries_type)
+        smoothed_max_threshold = (
+            self.min_cases if TimeseriesType.NEW_CASES == timeseries_type else self.min_deaths
+        )
+        dates, times, timeseries, delay = self.apply_gaussian_smoothing(
+            timeseries_type, smoothed_max_threshold=smoothed_max_threshold
+        )
         if len(timeseries) == 0:
             return None, None, None, None
 
@@ -730,7 +763,7 @@ class RtInferenceEngine:
             if posteriors is not None:
                 rt_map = posteriors.idxmax()
                 # Replace incorrect values for the last N=delay days with extrapolation
-                rt_map = extrapolate_smoothed_values(rt_map, 14, delay)
+                rt_map = extrapolate_smoothed_values(rt_map, self.extrapolation_window_size, delay)
 
                 # And continue on with original processing
                 df[f"Rt_MAP__{timeseries_type.value}"] = rt_map
@@ -795,6 +828,18 @@ class RtInferenceEngine:
                             )
 
         if df_all is not None and "Rt_MAP__new_deaths" in df_all and "Rt_MAP__new_cases" in df_all:
+            # What is our apparent CFR?
+            if self.state:
+                apparent_mortality_percent = (
+                    self.smoothed_timeseries[TimeseriesType.NEW_DEATHS]
+                    / self.smoothed_timeseries[TimeseriesType.NEW_CASES]
+                    * 100
+                )
+                mortality_recent = (
+                    apparent_mortality_percent.head(-self.smoothing_delay_days).tail(21).mean()
+                )
+                log.warn("Apparent mortality for %s (%%): %.2f" % (self.state, mortality_recent))
+
             df_all["Rt_MAP_composite"] = np.nanmean(
                 df_all[["Rt_MAP__new_cases", "Rt_MAP__new_deaths"]], axis=1
             )
@@ -886,7 +931,7 @@ class RtInferenceEngine:
             plt.xticks(rotation=30)
             plt.grid(True)
             plt.xlim(df_all.index.min() - timedelta(days=2), df_all.index.max() + timedelta(days=2))
-            plt.ylim(-1, 4)
+            plt.ylim(0, 3)
             plt.ylabel("$R_t$", fontsize=16)
             plt.legend()
             plt.title(self.display_name, fontsize=16)
