@@ -13,6 +13,7 @@ from libs.datasets import CommonFields
 from libs.datasets import FIPSPopulation, JHUDataset, CDSDataset
 from libs.datasets.dataset_utils import build_aggregate_county_data_frame
 from libs.datasets.dataset_utils import AggregationLevel
+from pyseir.deployment import model_conversion_factors
 import libs.datasets.can_model_output_schema as schema
 
 from typing import Tuple
@@ -213,10 +214,13 @@ class WebUIDataAdaptorV1:
             return
         population = self._get_population(fips)
 
-        # Get multiplicative conversion factors to scale model output to fit dataset current values
-        hosp_rescaling_factor, icu_rescaling_factor = self._get_model_to_dataset_conversion_factors(
-            t0_simulation=t0_simulation, fips=fips, pyseir_outputs=pyseir_outputs,
-        )
+        # # Get multiplicative conversion factors to scale model output to fit dataset current values
+        # hosp_rescaling_factor, icu_rescaling_factor = self._get_model_to_dataset_conversion_factors(
+        #     t0_simulation=t0_simulation, fips=fips, pyseir_outputs=pyseir_outputs,
+        # )
+
+        # Test to see what no scaling looks like now
+        hosp_rescaling_factor, icu_rescaling_factor = model_conversion_factors.get_no_scaling()
 
         # Iterate through each suppression policy.
         # Model output is interpolated to the dates desired for the API.

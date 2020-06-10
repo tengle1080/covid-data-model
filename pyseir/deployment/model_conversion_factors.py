@@ -10,6 +10,18 @@ log = structlog.get_logger(__name__)
 UNITY_SCALING_FACTOR = 1
 
 
+def get_no_scaling():
+    """
+    Return Unity Scaling Factors
+
+    Return
+    ------
+    convert_model_to_observed_hospitalized = 1
+    convert_model_to_observed_icu = 1
+    """
+    return UNITY_SCALING_FACTOR, UNITY_SCALING_FACTOR
+
+
 def _get_model_to_dataset_conversion_factors_for_state(state, t0_simulation):
     """
     Return scaling factors to convert model hospitalization and model icu numbers to match
