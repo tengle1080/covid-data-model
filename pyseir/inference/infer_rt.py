@@ -79,7 +79,7 @@ class RtInferenceEngine:
         min_cases=5,
         min_deaths=5,
         include_testing_correction=True,
-        profile_name="cases_only_new_smoothing_full_auto",  # TODO add definitions of profiles
+        profile_name="cases_only_shorter_extrapolation",
     ):
         np.random.seed(InferRtConstants.RNG_SEED)
         # Param Generation used for Xcor in align_time_series, has some stochastic FFT elements.
@@ -100,7 +100,9 @@ class RtInferenceEngine:
                 "alternate_smoothing": False,
                 "drop_outliers_before_smoothing": False,
                 "auto_sigma": False,
+                "process_sigma": 0.05,
                 "daily_sigma": False,
+                "extrapolation_window_size": 14,
             },
             "cases_only_new_smoothing_full_auto": {
                 "alternate_smoothing": True,
@@ -114,7 +116,31 @@ class RtInferenceEngine:
                 "daily_sigma": True,
                 "extrapolation_window_size": 14,
             },
-            "new_smoothing_full_auto": {
+            "cases_only_shorter_extrapolation": {
+                "alternate_smoothing": True,
+                "window_size": 11,
+                "drop_outliers_before_smoothing": False,
+                "disable_deaths": True,
+                "avoid_rounding": True,
+                "auto_sigma": True,
+                "process_sigma": 0.03,
+                "max_scaling": 30.0,
+                "daily_sigma": True,
+                "extrapolation_window_size": 10,
+            },
+            "cases_only_more_smoothing": {
+                "alternate_smoothing": True,
+                "window_size": 13,
+                "drop_outliers_before_smoothing": False,
+                "disable_deaths": True,
+                "avoid_rounding": True,
+                "auto_sigma": True,
+                "process_sigma": 0.03,
+                "max_scaling": 15.0,
+                "daily_sigma": True,
+                "extrapolation_window_size": 14,
+            },
+            "new_smoothing_with_deaths": {
                 "alternate_smoothing": True,
                 "window_size": 11,
                 "drop_outliers_before_smoothing": False,
@@ -124,6 +150,7 @@ class RtInferenceEngine:
                 "process_sigma": 0.03,
                 "max_scaling": 30.0,
                 "daily_sigma": True,
+                "extrapolation_window_size": 14,
             },
         }
         if profile_name not in profiles:
@@ -481,16 +508,17 @@ class RtInferenceEngine:
                 label=timeseries_type.value.replace("_", " ").title() + "Shifted",
             )
             # Show any adjustments that were made to outliers
-            for x, (orig, now) in adjusted.items():
-                ax.annotate(
-                    "orig %.0f" % orig,
-                    xy=(dates[x], now),
-                    xytext=(dates[x - 4], 0.5 * now),
-                    textcoords="data",
-                    xycoords="data",
-                    arrowprops=dict(arrowstyle="->", connectionstyle="arc3"),
-                    ha="right",
-                )
+            if self.drop_outliers_before_smoothing:
+                for x, (orig, now) in adjusted.items():
+                    ax.annotate(
+                        "orig %.0f" % orig,
+                        xy=(dates[x], now),
+                        xytext=(dates[x - 4], 0.5 * now),
+                        textcoords="data",
+                        xycoords="data",
+                        arrowprops=dict(arrowstyle="->", connectionstyle="arc3"),
+                        ha="right",
+                    )
             plt.plot(dates[-len(original) :], smoothed)
             plt.grid(True, which="both")
             plt.xticks(rotation=30)
@@ -655,9 +683,12 @@ class RtInferenceEngine:
         # Setup monitoring for Reff lagging signal in daily likelihood
         monitor = LagMonitor(debug=False)  # Set debug=True for detailed printout of daily lag
 
-        for previous_day, current_day in zip(
-            timeseries.index[: -delay - 1], timeseries.index[1:-delay]
-        ):
+        day_lists = (  # if smoothing delay nonzero need to prune some days
+            zip(timeseries.index[:-1], timeseries.index[1:])
+            if delay == 0
+            else zip(timeseries.index[: -delay - 1], timeseries.index[1:-delay])
+        )
+        for previous_day, current_day in day_lists:
 
             if self.daily_sigma:
                 # Calculate process matrix at each point
@@ -842,7 +873,7 @@ class RtInferenceEngine:
                     shift_in_days = self.align_time_series(series_a=series_a, series_b=series_b,)
 
                     df_all[f"lag_days__{timeseries_type.value}"] = shift_in_days
-                    logging.debug(
+                    logging.info(
                         "Using timeshift of: %s for timeseries type: %s ",
                         shift_in_days,
                         timeseries_type,
