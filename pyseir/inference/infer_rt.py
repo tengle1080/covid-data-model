@@ -81,15 +81,8 @@ class RtInferenceEngine:
         include_testing_correction=True,
         profile_name="cases_only_new_smoothing_full_auto",  # TODO add definitions of profiles
     ):
-<<<<<<< HEAD
         np.random.seed(InferRtConstants.RNG_SEED)
         # Param Generation used for Xcor in align_time_series, has some stochastic FFT elements.
-=======
-
-        np.random.seed(
-            NP_SEED
-        )  # Xcor, used in align_time_series,  has some stochastic FFT elements.
->>>>>>> not rounding appears to work and more flags addded
         self.fips = fips
         self.r_list = r_list
         self.window_size = window_size
@@ -407,7 +400,6 @@ class RtInferenceEngine:
                 )
             )
 
-            log.debug("smoothing delay is %.2f" % delay)
             smoothed = timeseries.rolling(window=len(weights), min_periods=1).apply(
                 lambda vals: np.dot(vals, weights[-len(vals) :]) / weights[-len(vals) :].sum()
             )
@@ -600,6 +592,10 @@ class RtInferenceEngine:
         dates, times, timeseries, delay = self.apply_gaussian_smoothing(
             timeseries_type, smoothed_max_threshold=smoothed_max_threshold
         )
+        log.info(
+            "%s: Analyzing posteriors for timeseries %s with smoothing delay %d"
+            % (self.display_name, timeseries_type.value, delay)
+        )
         if len(timeseries) == 0:
             return None, None, None, None
 
@@ -777,7 +773,6 @@ class RtInferenceEngine:
                 available_timeseries.append(TimeseriesType.NEW_HOSPITALIZATIONS)
 
         for timeseries_type in available_timeseries:
-            log.info("Analyzing timeseries: %s", timeseries_type)
 
             df = pd.DataFrame()
             dates, times, posteriors, delay = self.get_posteriors(timeseries_type)
@@ -847,11 +842,7 @@ class RtInferenceEngine:
                     shift_in_days = self.align_time_series(series_a=series_a, series_b=series_b,)
 
                     df_all[f"lag_days__{timeseries_type.value}"] = shift_in_days
-<<<<<<< HEAD
                     logging.debug(
-=======
-                    log.info(
->>>>>>> not rounding appears to work and more flags addded
                         "Using timeshift of: %s for timeseries type: %s ",
                         shift_in_days,
                         timeseries_type,
