@@ -15,9 +15,10 @@ class LagMonitor:
 
     # TODO add method to support issuing any warning at the end of processing
 
-    def __init__(self, threshold=0.7, days_threshold=4, debug=False):
-        self.threshold = threshold
+    def __init__(self, r_bin_threshold=5, lag_fraction=0.8, days_threshold=4, debug=False):
+        self.lag_fraction = lag_fraction
         self.days_threshold = days_threshold
+        self.r_bin_threshold = r_bin_threshold
         self.debug = debug
         self.last_lag = 0
         self._reset_()
@@ -41,10 +42,10 @@ class LagMonitor:
         lag_after_update = c_li_am - c_po_am
 
         # Is this day lagging more than threshold applied to drive?
-        compare_lag = round(self.threshold * abs(driving_likelihood))
+        compare_lag = round(self.lag_fraction * abs(driving_likelihood))
         noLag = (
             current_day < 12  # needs to settle in
-            or abs(lag_after_update) < 3  # lag is less than 3*.02 = .06 in Reff
+            or abs(lag_after_update) < self.r_bin_threshold  # *.02 for threshold in Reff
             or abs(lag_after_update)
             < compare_lag  # Able to move 1/3 of drive per day -> 3 days lag
             or self.last_lag * lag_after_update < 0  # Drive switched directions
@@ -95,19 +96,17 @@ class LagMonitor:
         self.last_lag = lag_after_update
 
 
-def extrapolate_smoothed_values(series, using_n, replacing_last_n):
+def extrapolate_smoothed_values(series, using_n, adding_n):
     """
-    Assumes the replacing_last_n values of the series should be replaced
-    Uses the previous using_n values to fit a straight line
-    And then extrapolates that fit to do the replacement
-    TODO somehow ensuring continuity at the transition to the fit line
-    Returning just the extrapolated part of the sequence
+    Extrapolates Pandas series or Numpy array 
     """
-    subseries = series.tail(using_n + replacing_last_n).head(using_n)
+    isNumpy = True if "numpy" in str(type(series)) else False  # type(a).__module__ == np.__name__
+    if isNumpy:  # isinstance(x, pd.DataFrame)
+        series = pd.Series(series)
 
-    # Need these so can adjust last valid point to be 0.,0.
-    last_x = series.index.values[-replacing_last_n - 1]
-    last_y = series.values[-replacing_last_n - 1]
+    subseries = series.tail(using_n)
+    last_x = series.index.values[-1]
+    last_y = series.values[-1]
 
     # Scale so last point is at 0.,0.
     X = np.array(list(map(lambda d: float(d - last_x), subseries.index.values))).reshape(
@@ -122,6 +121,10 @@ def extrapolate_smoothed_values(series, using_n, replacing_last_n):
     (m, b) = (linear_regressor.coef_[0], linear_regressor.intercept_)
 
     ext = series.copy()
-    for x in series.tail(replacing_last_n).index.values:
+    for x in range(last_x + 1, last_x + 1 + adding_n):
         ext._set_value(x, last_y + m * (x - last_x))
+
+    if isNumpy:  # convert back to numpy
+        ext = ext.values
+
     return ext

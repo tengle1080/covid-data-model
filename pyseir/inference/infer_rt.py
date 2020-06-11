@@ -12,7 +12,7 @@ import us
 import structlog
 from pyseir import load_data
 from pyseir.utils import AggregationLevel, TimeseriesType
-from pyseir.utils import get_run_artifact_path, RunArtifact
+from pyseir.utils import get_run_artifact_path, RunArtifact, get_fullname_for_fips
 from pyseir.parameters.parameter_ensemble_generator import ParameterEnsembleGenerator
 from structlog.threadlocal import bind_threadlocal, clear_threadlocal, merge_threadlocal
 from structlog import configure
@@ -112,7 +112,7 @@ class RtInferenceEngine:
             "cases_only_new_smoothing_full_auto": {
                 "alternate_smoothing": True,
                 "window_size": 11,
-                "drop_outliers_before_smoothing": True,
+                "drop_outliers_before_smoothing": False,
                 "disable_deaths": True,
                 "avoid_rounding": True,
                 "auto_sigma": True,
@@ -204,15 +204,19 @@ class RtInferenceEngine:
         # Temporary debugging code - TODO to be removed
         # This probably won't work right as with counties
         self.debug = True
-        debug_dir = "_debug/"
+        debug_dir = "output/rt_infer"
         if self.debug:
             self.scale_up = 1.0
             if not os.path.isdir(debug_dir):
                 print("making %s directory to store debug output in" % debug_dir)
                 os.mkdir(debug_dir)
-            self.debug_files_prefix = debug_dir + "/" + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-            if len(fips) == 2:
-                self.debug_files_prefix += "_" + us.states.lookup(fips).name
+            self.debug_files_prefix = (
+                debug_dir
+                + "/"
+                + datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+                + "__"
+                + get_fullname_for_fips(fips)
+            )
             os.mkdir(self.debug_files_prefix)
             self.debug_files_prefix += "/"  # Now just add filenames below
 
@@ -403,29 +407,34 @@ class RtInferenceEngine:
                 )
             )
 
-            log.info("smoothing delay is %.2f" % delay)
+            log.debug("smoothing delay is %.2f" % delay)
             smoothed = timeseries.rolling(window=len(weights), min_periods=1).apply(
                 lambda vals: np.dot(vals, weights[-len(vals) :]) / weights[-len(vals) :].sum()
             )
 
-            # Drop outliers and smooth again
+            # Replace outliers with smoothed value and smooth again
+            # TODO use centered gaussian smoothing for removal will play nice with removal as no lag
             drop_for_last = min(60, len(smoothed))
+            adjusted = dict()
             if self.drop_outliers_before_smoothing:
+                # resid = (timeseries - smoothed).tail(drop_for_last)
+                # note smoothed not yet adjusted for delay so can adjust all points to current
                 resid = (
                     (timeseries - smoothed.shift(-delay))
                     .tail(drop_for_last)
                     .head(drop_for_last - delay)
                 )
                 # Put a minimum on stddev to be cautious removing points
-                (resid_mean, resid_std) = (resid.mean(), max(resid.std(), 2.0))
+                (resid_mean, resid_std) = (resid.mean(), max(resid.std(), 3.0))
                 z_values = resid.apply(lambda x: (x - resid_mean) / resid_std)
 
-                undo = 1.0 / (1.0 - weights[-delay] / weights.sum())
+                undo = 1.0 / (1.0 - weights[-delay - 1] / weights.sum())  # len(weights) - 1
                 for index, z in z_values.items():
-                    if z > 2.0 or z < -2.0 and smoothed[index] > 5:  # Outlier to remove
+                    if (z > 3.0 or z < -2.0) and smoothed[index] > 5:  # Outlier to remove
                         replace_with = (
                             timeseries[index] - (timeseries[index] - smoothed[index]) * undo
                         )
+                        adjusted[index] = (timeseries[index], replace_with)
                         log.warn(
                             "Replacing outlier (z=%.2f) on day %s: %.2f -> %.2f"
                             % (
@@ -442,7 +451,7 @@ class RtInferenceEngine:
                 )
 
             # TODO extrapolate for delay days out into future and then shift into past that many days
-            smoothed = smoothed.shift(-delay)
+            smoothed = smoothed.shift(-delay, fill_value=smoothed.tail(1).values[0])
         else:
             smoothed = (
                 timeseries.rolling(
@@ -468,16 +477,28 @@ class RtInferenceEngine:
         smoothed = smoothed.iloc[idx_start:]
         original = timeseries.loc[smoothed.index]
 
-        if (plot or self.debug) and len(smoothed) > 0:  # Alex changed
-            if self.debug:
-                fig = plt.figure(figsize=(10, 4))  # Alex added
-                plt.title("%s for %s" % (str(timeseries_type.value), self.state))
+        # TODO merge self.debug behaviour with plot and pass it in
+        if (plot or self.debug) and len(smoothed) > 0:  # Filter on no data to avoid failure
+            fig = plt.figure(figsize=(10, 4))
+            ax = plt.axes  # fig.add_subplot(111)
+            plt.title("%s for %s" % (str(timeseries_type.value), self.state))
             plt.scatter(
                 dates[-len(original) :],
                 original,
                 alpha=0.3,
                 label=timeseries_type.value.replace("_", " ").title() + "Shifted",
             )
+            # Show any adjustments that were made to outliers
+            for x, (orig, now) in adjusted.items():
+                ax.annotate(
+                    "orig %.0f" % orig,
+                    xy=(dates[x], now),
+                    xytext=(dates[x - 4], 0.5 * now),
+                    textcoords="data",
+                    xycoords="data",
+                    arrowprops=dict(arrowstyle="->", connectionstyle="arc3"),
+                    ha="right",
+                )
             plt.plot(dates[-len(original) :], smoothed)
             plt.grid(True, which="both")
             plt.xticks(rotation=30)
@@ -488,6 +509,7 @@ class RtInferenceEngine:
                     self.debug_files_prefix + "apply_gaussian_filter-" + timeseries_type.value,
                     bbox_inches="tight",
                 )
+            plt.close(fig)
 
         # Store some data for later use
         self.smoothing_delay_days = delay
@@ -594,8 +616,8 @@ class RtInferenceEngine:
                 columns=timeseries.index[1:],
             )
         else:
-            ts_floor = timeseries.apply(np.floor)
-            ts_ceil = timeseries.apply(np.ceil)
+            ts_floor = timeseries.apply(np.floor).astype(int)
+            ts_ceil = timeseries.apply(np.ceil).astype(int)
             ts_frac = timeseries - ts_floor
 
             likelihoods_floor = pd.DataFrame(
@@ -637,7 +659,9 @@ class RtInferenceEngine:
         # Setup monitoring for Reff lagging signal in daily likelihood
         monitor = LagMonitor(debug=False)  # Set debug=True for detailed printout of daily lag
 
-        for previous_day, current_day in zip(timeseries.index[:-1], timeseries.index[1:]):
+        for previous_day, current_day in zip(
+            timeseries.index[: -delay - 1], timeseries.index[1:-delay]
+        ):
 
             if self.daily_sigma:
                 # Calculate process matrix at each point
@@ -687,13 +711,14 @@ class RtInferenceEngine:
         self.log_likelihood = log_likelihood
 
         if plot or self.debug:  # Alex added
-            plt.figure(figsize=(12, 8))
+            fig = plt.figure(figsize=(12, 8))
             plt.plot(posteriors, alpha=0.1, color="k")
             plt.grid(alpha=0.4)
             plt.xlabel("$R_t$", fontsize=16)
             plt.title("Posteriors", fontsize=18)
             if self.debug:  # Alex added
                 plt.savefig(self.debug_files_prefix + "r_t_posteriors", bbox_inches="tight")
+            plt.close(fig)
 
         start_idx = -len(posteriors.columns)
 
@@ -752,8 +777,7 @@ class RtInferenceEngine:
                 available_timeseries.append(TimeseriesType.NEW_HOSPITALIZATIONS)
 
         for timeseries_type in available_timeseries:
-            if self.debug:
-                print("Analyzing timeseries: %s" % timeseries_type)
+            log.info("Analyzing timeseries: %s", timeseries_type)
 
             df = pd.DataFrame()
             dates, times, posteriors, delay = self.get_posteriors(timeseries_type)
@@ -761,15 +785,36 @@ class RtInferenceEngine:
             # Reff for those days will be extrapolated below
 
             if posteriors is not None:
-                rt_map = posteriors.idxmax()
-                # Replace incorrect values for the last N=delay days with extrapolation
-                rt_map = extrapolate_smoothed_values(rt_map, self.extrapolation_window_size, delay)
+                if self.alternate_smoothing:
+                    starts_at = posteriors.columns[0]
+                    posteriors = posteriors[
+                        np.arange(
+                            starts_at, starts_at + posteriors.shape[1] - delay
+                        )  # discard delay columns from posteriors
+                    ]
+                    rt_map = posteriors.idxmax()
+
+                    # Replace incorrect values for the last N=delay days with extrapolation
+                    rt_map = extrapolate_smoothed_values(
+                        rt_map, self.extrapolation_window_size, delay
+                    )
+                else:
+                    rt_map = posteriors.idxmax()
 
                 # And continue on with original processing
                 df[f"Rt_MAP__{timeseries_type.value}"] = rt_map
 
                 for ci in self.confidence_intervals:
                     ci_low, ci_high = self.highest_density_interval(posteriors, ci=ci)
+                    if (
+                        self.alternate_smoothing
+                    ):  # TODO update expolate to handle series or arrays and rename
+                        ci_low = extrapolate_smoothed_values(
+                            ci_low, self.extrapolation_window_size, delay
+                        )
+                        ci_high = extrapolate_smoothed_values(
+                            ci_high, self.extrapolation_window_size, delay
+                        )
 
                     low_val = 1 - ci
                     high_val = ci
@@ -854,8 +899,8 @@ class RtInferenceEngine:
             df_all["Rt_MAP_composite"] = df_all["Rt_MAP__new_cases"]
             df_all["Rt_ci95_composite"] = df_all["Rt_ci95__new_cases"]
 
-        if (plot and df_all is not None) or self.debug:
-            plt.figure(figsize=(10, 6))
+        if (plot or self.debug) and df_all is not None:
+            fig = plt.figure(figsize=(10, 6))
 
             if "Rt_MAP_composite" in df_all:
                 plt.scatter(
@@ -937,11 +982,11 @@ class RtInferenceEngine:
             plt.title(self.display_name, fontsize=16)
 
             output_path = get_run_artifact_path(self.fips, RunArtifact.RT_INFERENCE_REPORT)
-            if not self.debug:
-                plt.savefig(output_path, bbox_inches="tight")
-            else:
+            plt.savefig(output_path, bbox_inches="tight")
+
+            if self.debug:  # also in debug file area
                 plt.savefig(self.debug_files_prefix + "r0_inferred", bbox_inches="tight")
-            # plt.close()
+            plt.close(fig)
         if df_all is None or df_all.empty:
             logging.warning("Inference not possible for fips: %s", self.fips)
         return df_all

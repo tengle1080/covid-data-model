@@ -867,7 +867,11 @@ def load_new_test_data_by_fips(fips, t0, smoothing_tau=5, correction_threshold=5
     df["expected_positives_from_test_increase"] = ewma_smoothing(
         df["expected_positives_from_test_increase"], smoothing_tau
     )
-    df["expected_positives_from_test_increase"][df["new_positive"] < 5] = 0
+    # df["expected_positives_from_test_increase"][df["new_positive"] < 5] = 0 generates SettingWithCopyWarning
+    setif = lambda x, y: 0 if x < 5 else y
+    df["expected_positives_from_test_increase"] = df.apply(
+        lambda x: setif(x.new_positive, x.expected_positives_from_test_increase), axis=1
+    )
 
     df["times"] = [
         int((date - t0).days) for date in pd.to_datetime(df["date"].values).to_pydatetime()

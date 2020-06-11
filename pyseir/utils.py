@@ -49,6 +49,17 @@ class RunArtifact(Enum):
     BACKTEST_RESULT = "backtest_result"
 
 
+def get_fullname_for_fips(fips):
+    name = ""
+    state_obj = us.states.lookup(fips[:2])
+    if len(fips) == 5:
+        county = load_data.load_county_metadata_by_fips(fips)["county"]
+        name = f"{state_obj.name}__{county}__{fips}"
+    else:
+        name = f"{state_obj.name}__{fips}"
+    return name
+
+
 def get_run_artifact_path(fips, artifact, output_dir=None):
     """
     Get an artifact path for a given locale and artifact type.
