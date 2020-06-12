@@ -560,16 +560,11 @@ def get_current_hospitalized(fips, t0, category: HospitalizationCategory):
     current estimate: float
         The most recent provided value for the current occupied in the requested category.
     """
-
+    ts = combined_datasets.build_us_timeseries_with_all_fields()
     if len(fips) == 2:
-        kwargs = dict(
-            aggregation_level=AggregationLevel.STATE,
-            country="USA",
-            state=us.states.lookup(fips).abbr,
-        )
+        df = ts.get_data(AggregationLevel.STATE, country="USA", state=us.states.lookup(fips).abbr)
     else:
-        kwargs = dict(aggregation_level=AggregationLevel.COUNTY, country="USA", fips=fips)
-    df = combined_datasets.build_us_timeseries_with_all_fields().get_data(**kwargs)
+        df = ts.get_data(AggregationLevel.COUNTY, country="USA", fips=fips)
     return _get_current_hospitalized(df, t0, category)
 
 
@@ -605,10 +600,9 @@ def _get_current_hospitalized(
     # recent value which may be None, nor take just the most recent any value, which may be weeks
     # ago.
 
-    # Datetimes are in UTC. Look at possible values that are within this time window.
-    date_minimum = pd.Timestamp.utcnow() - pd.Timedelta(days=NUM_DAYS_TO_LOOK_BACK)
-    date_mask = df["date"] >= date_minimum.to_datetime64()
-    recent_days_index = df.index[date_mask]
+    # Datetimes are in implicit UTC. Look at possible values that are within this time window.
+    date_min = pd.Timestamp.utcnow().tz_localize(None) - pd.Timedelta(days=NUM_DAYS_TO_LOOK_BACK)
+    recent_days_index = df.index[df["date"] >= date_min]
 
     # Look back from most recent and find the first (latest) non-null value. If the loop drops out,
     # that means there were no non-null values in the window of interest, and we return Nones.
