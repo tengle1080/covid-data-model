@@ -160,6 +160,7 @@ class RtInferenceEngine:
         #########################################################
         # Controls for smoothing
 
+        # @Brett take this and put in your InferRtConstants class
         # Gaussian can have any value, alternate only 7-13. Shorter windows need lower max_scaling
         if "window_size" in profile:
             self.window_size = profile["window_size"]
@@ -182,11 +183,13 @@ class RtInferenceEngine:
         #########################################################
         # Control Reff inference process
 
+        # @Brett take this and put in your InferRtConstants class
         # Ignore deaths in Reff inferencing
         self.disable_deaths = profile["disable_deaths"] if "disable_deaths" in profile else False
         if self.disable_deaths:
             self.min_deaths = 1000000  # normally 5
 
+        # @Brett assume this is true - you don't need a setting for it
         # Avoid rounding timeseries and interpolate for likelihoods
         self.avoid_rounding = profile["avoid_rounding"] if "avoid_rounding" in profile else False
         if self.avoid_rounding:
@@ -194,27 +197,33 @@ class RtInferenceEngine:
                 self.min_deaths = min(1.0, self.min_deaths)
             self.min_cases = min(1.0, self.min_cases)
 
+        # @Brett phase 1 take this and put in your InferRtConstants class - use the value .03
         # Adjust base process sigma if alternate smoothing
         if self.alternate_smoothing and profile["process_sigma"]:
             self.process_sigma = profile["process_sigma"]
 
+        # @Brett assume this is true - you don't need a setting for it
         # Automatically adjusts sigma based on (sqrt of) average median count
         self.auto_sigma = profile["auto_sigma"] if "auto_sigma" in profile else False
 
         if self.auto_sigma:
+            # @Brett phase 1 take this and put in your InferRtConstants class - use the default here
             # Starts adjusting sigma up as count drops below this
             self.scale_from_median = (
                 profile["scale_from_median"] if "scale_from_median" in profile else 5000.0
             )
 
+            # @Brett phase 1 take this and put in your InferRtConstants class - use the default here
             # Maximum amount sigma can be scaled up for low counts
             self.max_scaling = profile["max_scaling"] if "max_scaling" in profile else 30.0
 
+            # @Brett assume this is true - you don't need a setting for it
             # Adjust daily based on exponential moving average
             self.daily_sigma = profile["daily_sigma"] if "daily_sigma" in profile else True
         else:
             self.daily_sigma = False
 
+        # @Brett phase 2
         # Reff for last <delay> days has to be extrapolated.
         # Set the size of the linear regression window used
         self.extrapolation_window_size = (
@@ -472,6 +481,7 @@ class RtInferenceEngine:
             # TODO extrapolate for delay days out into future and then shift into past that many days
             smoothed = smoothed.shift(-delay, fill_value=smoothed.tail(1).values[0])
         else:
+            # @Brett phase 1 put window_size (use only odd values and start with 19) in your configuration parameters and remove the rounding
             smoothed = (
                 timeseries.rolling(
                     self.window_size, win_type="gaussian", min_periods=self.kernel_std, center=True
@@ -483,6 +493,7 @@ class RtInferenceEngine:
         if not self.avoid_rounding:
             smoothed = smoothed.round()
 
+        # @Brett phase 1 part of the change for not rounding
         nonzeros = [idx for idx, val in enumerate(smoothed.round()) if val != 0]
 
         if smoothed.empty:
@@ -507,6 +518,8 @@ class RtInferenceEngine:
                 alpha=0.3,
                 label=timeseries_type.value.replace("_", " ").title() + "Shifted",
             )
+            # @Brett phase 1 you can use this code to show the points you've adjusted on the data and smoothing chart
+            # @Brett phase 1 this is very useful to have and is not part of the standard artifact. I would find some way to add it
             # Show any adjustments that were made to outliers
             if self.drop_outliers_before_smoothing:
                 for x, (orig, now) in adjusted.items():
@@ -529,6 +542,7 @@ class RtInferenceEngine:
                     self.debug_files_prefix + "apply_gaussian_filter-" + timeseries_type.value,
                     bbox_inches="tight",
                 )
+            # @Brett phase 1 closing figures prevents a bunch of random warnings in the log
             plt.close(fig)
 
         # Store some data for later use
@@ -537,6 +551,7 @@ class RtInferenceEngine:
             self.smoothed_timeseries = dict()
         self.smoothed_timeseries[timeseries_type] = smoothed
 
+        # @Brett you don't need to return delays as the old smoothing has none. Don't need this or any related change
         return dates, times, smoothed, delay
 
     def highest_density_interval(self, posteriors, ci):
@@ -565,6 +580,7 @@ class RtInferenceEngine:
         ci_high = self.r_list[high_idx_list]
         return ci_low, ci_high
 
+    # @Brett phase 1 you need this function which calculates sigma for each day during inference
     # make separate function so call call multiple times
     def make_process_matrix(self, timeseries_scale=5000.0):
         if self.auto_sigma and timeseries_scale is not None:
@@ -592,8 +608,6 @@ class RtInferenceEngine:
     def get_posteriors(self, timeseries_type, plot=False):
         """
         Generate posteriors for R_t.
-        TODO worth making the relatively simple generalization of using non integral (smoothed) timeseries
-             in variables lam and likelihoods (interpolate between nearest integers)?
 
         Parameters
         ----------
@@ -614,6 +628,9 @@ class RtInferenceEngine:
         delay: int
             Number of days posterior results are delayed (those last days will be incorrect)
         """
+        # @Brett phase 1 not sure but you might need this. How self.min_[cases,deaths] is applied
+        # (compared to one day, or total, max day) to abort use of a timeseries is not that clear
+        # to me. I added this code and the updated call to apply_gaussian_smoothing.
         smoothed_max_threshold = (
             self.min_cases if TimeseriesType.NEW_CASES == timeseries_type else self.min_deaths
         )
@@ -639,6 +656,8 @@ class RtInferenceEngine:
                 index=self.r_list,
                 columns=timeseries.index[1:],
             )
+        # @Brett you need this code and the astype(int) avoids a bunch of warnings from stats calls that
+        # expect actual integers not just real values that are rounded.
         else:
             ts_floor = timeseries.apply(np.floor).astype(int)
             ts_ceil = timeseries.apply(np.ceil).astype(int)
@@ -657,6 +676,7 @@ class RtInferenceEngine:
             likelihoods = ts_frac * likelihoods_ceil + (1 - ts_frac) * likelihoods_floor
 
         # (3) Create the Gaussian Matrix (but now scaled)
+        # @Brett phase 1 you need this call to initialize sigma but its the bit below that's more important
         (current_sigma, process_matrix) = self.make_process_matrix(timeseries.median())
 
         # (4) Calculate the initial prior. Gamma mean of "a" with mode of "a-1".
@@ -678,11 +698,15 @@ class RtInferenceEngine:
 
         # (5) Iteratively apply Bayes' rule
 
+        # @Brett phase 1 I think you need this also
         # Initialize scaling (for auto sigma)
         scale = timeseries.head(1).item()
+
+        # @Brett phase 1 its really useful to keep this Lag Monitor which logs WARNINGS when Reff is lagging likelihood
         # Setup monitoring for Reff lagging signal in daily likelihood
         monitor = LagMonitor(debug=False)  # Set debug=True for detailed printout of daily lag
 
+        # @Brett you don't need any of this it relates to managing days that won't have valid data with new smoothing
         day_lists = (  # if smoothing delay nonzero need to prune some days
             zip(timeseries.index[:-1], timeseries.index[1:])
             if delay == 0
@@ -691,6 +715,7 @@ class RtInferenceEngine:
         for previous_day, current_day in day_lists:
 
             if self.daily_sigma:
+                # @Brett phase 1 you definitely need this
                 # Calculate process matrix at each point
                 scale = 0.9 * scale + 0.1 * timeseries[current_day]
                 (current_sigma, process_matrix) = self.make_process_matrix(scale)
@@ -722,7 +747,7 @@ class RtInferenceEngine:
             else:
                 posteriors[current_day] = numerator / denominator
 
-            # current_day, prev_post_am, prior_am, like_am, post_am
+            # @Brett phase 1 you want this and the new file infer_utils.py where LagMonitor is defined
             monitor.evaluate_lag_using_argmaxes(
                 current_day,
                 current_sigma,
@@ -800,6 +825,7 @@ class RtInferenceEngine:
             is load_data.HospitalizationDataType.CUMULATIVE_HOSPITALIZATIONS
             and len(hosps > 3)
         ):
+            # @Brett phase 1 not sure all the code I put in to make sure only cases are considered
             if not self.debug:
                 available_timeseries.append(TimeseriesType.NEW_HOSPITALIZATIONS)
 
@@ -811,6 +837,7 @@ class RtInferenceEngine:
             # Reff for those days will be extrapolated below
 
             if posteriors is not None:
+                # @Brett you don't need any of this alternate_smoothing related code
                 if self.alternate_smoothing:
                     starts_at = posteriors.columns[0]
                     posteriors = posteriors[

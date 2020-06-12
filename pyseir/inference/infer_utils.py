@@ -6,7 +6,7 @@ from sklearn.linear_model import LinearRegression
 
 log = logging.getLogger(__name__)
 
-
+# @Brett phase 1 you definitely want this. It could be cleaned up more later.
 class LagMonitor:
     """
     Monitors lag in posterior relative to driving likelihood as Bayesian update is repeatedly
@@ -96,6 +96,7 @@ class LagMonitor:
         self.last_lag = lag_after_update
 
 
+# @Brett phase 2
 def extrapolate_smoothed_values(series, using_n, adding_n):
     """
     Extrapolates Pandas series or Numpy array 
