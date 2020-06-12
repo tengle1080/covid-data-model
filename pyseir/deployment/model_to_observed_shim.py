@@ -1,4 +1,4 @@
-import structlog
+# import structlog
 from typing import Sequence
 from datetime import datetime
 
@@ -8,11 +8,11 @@ from pyseir import load_data
 from pyseir.load_data import HospitalizationCategory
 
 
-log = structlog.getLogger()
+# log = structlog.getLogger()
 
 
 def shim_model_to_observations(
-    model_acute_ts: Sequence, model_icu_ts: Sequence, fips: str, t0: datetime
+    model_acute_ts: Sequence, model_icu_ts: Sequence, fips: str, t0: datetime, log
 ):
     """
     Take model outputs and shim them s.t. the latest observed value matches the same value for the
@@ -38,12 +38,12 @@ def shim_model_to_observations(
     f = _strict_match_model_to_observed
     # f = _intralevel_match_model_to_observed
     # f = _interlevel_match_model_to_observed
-    return f(model_acute_ts, model_icu_ts, fips, t0)
+    return f(model_acute_ts, model_icu_ts, fips, t0, log=log)
 
 
 # MOST SIMPLE OPTION
 def _strict_match_model_to_observed(
-    model_acute_ts: np.array, model_icu_ts: np.array, fips: str, t0: datetime
+    model_acute_ts: np.array, model_icu_ts: np.array, fips: str, t0: datetime, log
 ):
     """Most strict. Only shift if current value available at the correct aggregation level"""
 
@@ -69,12 +69,22 @@ def _strict_match_model_to_observed(
         icu_shim = observed_latest_icu - model_icu_ts[ts_idx_icu]
 
     shimmed_acute = acute_shim + model_acute_ts
+    shimmed_clipped_acute = shimmed_acute.clip(min=0)
     shimmed_icu = icu_shim + model_icu_ts
-    return shimmed_acute, shimmed_icu
+    shimmed_clipped_icu = shimmed_icu.clip(min=0)
+
+    log.info(
+        "Model to Observed Shim Applied",
+        fips=fips,
+        acute_shim=np.round(acute_shim),
+        icu_shim=np.round(icu_shim),
+    )
+
+    return shimmed_clipped_acute, shimmed_clipped_icu
 
 
 def _interlevel_match_model_to_observed(
-    model_acute_ts: np.array, model_icu_ts: np.array, fips: str, t0: datetime
+    model_acute_ts: np.array, model_icu_ts: np.array, fips: str, t0: datetime, log=None
 ):
 
     """

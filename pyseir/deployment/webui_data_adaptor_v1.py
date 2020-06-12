@@ -157,12 +157,14 @@ class WebUIDataAdaptorV1:
                 t_list_downsampled, t_list, raw_model_icu_values
             )
 
+            shim_log = structlog.getLogger(scenario=suppression_policy)
             # Shim the model outputs for acute and icu
             shimmed_acute, shimmed_icu = shim.shim_model_to_observations(
                 model_acute_ts=interpolated_model_hosp_gen_values,
                 model_icu_ts=interpolated_model_icu_values,
                 fips=fips,
                 t0=t0_simulation,
+                log=shim_log,
             )
 
             # Save shimmed arrays to output
