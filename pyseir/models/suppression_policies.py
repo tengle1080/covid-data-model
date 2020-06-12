@@ -36,10 +36,14 @@ def get_future_suppression_from_r0(R0, scenario):
     Returns
     -------
     epsilon: float
-        Suppression fraction.
+        Suppression fraction compared to R0.
     """
     if scenario == "no_intervention":
-        return 1
+        # Return either 2.5 (https://www.cdc.gov/coronavirus/2019-ncov/hcp/planning-scenarios.html)
+        # or R0 (converted to epsilon) whichever is lower
+        fitted_r0 = 1
+        cdc_recommended_max = 2.5 / R0
+        return np.min(fitted_r0, cdc_recommended_max)
     elif scenario == "flatten_the_curve":
         return 0.97 / R0
     elif scenario == "social_distancing":
