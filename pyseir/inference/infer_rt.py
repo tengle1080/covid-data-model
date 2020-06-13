@@ -79,7 +79,8 @@ class RtInferenceEngine:
         min_cases=5,
         min_deaths=5,
         include_testing_correction=True,
-        profile_name="cases_only_shorter_extrapolation",
+        # @Brett you don't need this change I think you'll always want the fix
+        profile_name="cases_only_old_smoothing_full_auto",
     ):
         np.random.seed(InferRtConstants.RNG_SEED)
         # Param Generation used for Xcor in align_time_series, has some stochastic FFT elements.
@@ -103,6 +104,20 @@ class RtInferenceEngine:
                 "process_sigma": 0.05,
                 "daily_sigma": False,
                 "extrapolation_window_size": 14,
+                "patch_process_matrix": False,
+            },
+            "cases_only_old_smoothing_full_auto": {
+                "alternate_smoothing": False,
+                "window_size": 21,
+                "drop_outliers_before_smoothing": False,
+                "disable_deaths": True,
+                "avoid_rounding": True,
+                "auto_sigma": True,
+                "process_sigma": 0.05,
+                "max_scaling": 30.0,
+                "daily_sigma": True,
+                "extrapolation_window_size": 14,
+                "patch_process_matrix": True,
             },
             "cases_only_new_smoothing_full_auto": {
                 "alternate_smoothing": True,
@@ -115,6 +130,7 @@ class RtInferenceEngine:
                 "max_scaling": 30.0,
                 "daily_sigma": True,
                 "extrapolation_window_size": 14,
+                "patch_process_matrix": True,
             },
             "cases_only_shorter_extrapolation": {
                 "alternate_smoothing": True,
@@ -127,6 +143,7 @@ class RtInferenceEngine:
                 "max_scaling": 30.0,
                 "daily_sigma": True,
                 "extrapolation_window_size": 10,
+                "patch_process_matrix": True,
             },
             "cases_only_more_smoothing": {
                 "alternate_smoothing": True,
@@ -139,6 +156,7 @@ class RtInferenceEngine:
                 "max_scaling": 15.0,
                 "daily_sigma": True,
                 "extrapolation_window_size": 14,
+                "patch_process_matrix": True,
             },
             "new_smoothing_with_deaths": {
                 "alternate_smoothing": True,
@@ -151,6 +169,7 @@ class RtInferenceEngine:
                 "max_scaling": 30.0,
                 "daily_sigma": True,
                 "extrapolation_window_size": 14,
+                "patch_process_matrix": True,
             },
         }
         if profile_name not in profiles:
@@ -205,6 +224,12 @@ class RtInferenceEngine:
         # @Brett assume this is true - you don't need a setting for it
         # Automatically adjusts sigma based on (sqrt of) average median count
         self.auto_sigma = profile["auto_sigma"] if "auto_sigma" in profile else False
+
+        # @Brett phase 1b - you'll want this
+        # Patch process_matrix array so it isn't biased to forcing prior towards Reff = (10+0)/2 = 5
+        self.patch_process_matrix = (
+            profile["patch_process_matrix"] if "patch_process_matrix" in profile else False
+        )
 
         if self.auto_sigma:
             # @Brett phase 1 take this and put in your InferRtConstants class - use the default here
@@ -509,8 +534,11 @@ class RtInferenceEngine:
 
         # TODO merge self.debug behaviour with plot and pass it in
         if (plot or self.debug) and len(smoothed) > 0:  # Filter on no data to avoid failure
-            fig = plt.figure(figsize=(10, 4))
-            ax = plt.axes  # fig.add_subplot(111)
+            fig = plt.figure(figsize=(10, 6))
+            ax = fig.add_subplot(111)  # plt.axes
+            ax.set_yscale("log")
+            chart_min = max(0.1, original.min())
+            ax.set_ylim((chart_min, original.max()))
             plt.title("%s for %s" % (str(timeseries_type.value), self.state))
             plt.scatter(
                 dates[-len(original) :],
@@ -596,12 +624,34 @@ class RtInferenceEngine:
         else:
             use_sigma = self.process_sigma
 
-        process_matrix = sps.norm(loc=self.r_list, scale=use_sigma).pdf(
-            self.r_list[:, None]  # Alex added scale up
-        )
+        process_matrix = sps.norm(loc=self.r_list, scale=use_sigma).pdf(self.r_list[:, None])
 
-        # (3a) Normalize all rows to sum to 1
-        process_matrix /= process_matrix.sum(axis=0)
+        # @Brett phase 1b you'll definitely want this. TODO make it more efficient.
+        # process_matrix applies gaussian smoothing to the previous posterior to make the prior.
+        # But when the gaussian is wide much of its distribution function can be outside of the
+        # range Reff = (0,10). When this happens the smoothing is not symmetric in R space. For
+        # R<1, when posteriors[previous_day]).argmax() < 50, this asymmetry can push the argmax of
+        # the prior >10 Reff bins (delta R = .2) on each new day. This was a large systematic error.
+        if self.patch_process_matrix:
+            # Ensure smoothing window is symmetric in X direction around diagonal
+            # to avoid systematic drift towards middle (Reff = 5)
+            sz = len(self.r_list)
+            for row in range(0, sz):
+                if row < (sz - 1) / 2:
+                    drop = range(2 * row + 1, sz)
+                elif row > (sz - 1) / 2:
+                    drop = range(0, sz - 2 * (sz - row))
+                # print("y", y, "dropping x in", drop)
+                for col in drop:
+                    process_matrix[row, col] = 0.0
+
+            # (3a) Normalize all rows to sum to 1
+            row_sums = process_matrix.sum(axis=1)
+            for row in range(0, sz):
+                process_matrix[row] = process_matrix[row] / row_sums[row]
+        else:
+            # (3a) Normalize all rows to sum to 1
+            process_matrix /= process_matrix.sum(axis=0)  # (note wrong axis)
 
         return (use_sigma, process_matrix)
 
@@ -1025,7 +1075,7 @@ class RtInferenceEngine:
             plt.xticks(rotation=30)
             plt.grid(True)
             plt.xlim(df_all.index.min() - timedelta(days=2), df_all.index.max() + timedelta(days=2))
-            plt.ylim(0, 3)
+            plt.ylim(0.3, 2.7)
             plt.ylabel("$R_t$", fontsize=16)
             plt.legend()
             plt.title(self.display_name, fontsize=16)
