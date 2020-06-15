@@ -103,8 +103,8 @@ class EnsembleRunner:
         county_fips = None if self.agg_level is AggregationLevel.STATE else self.fips
 
         if not covid_timeseries:
-            # TODO(tom): deprecate all code paths that get here. I'm trying to move towards loading all data
-            # once and passing it around in parameters.
+            # TODO(tom): deprecate all code paths that get here. I'm trying to move towards
+            # loading all data once and passing it around in parameters.
             covid_timeseries = JHUDataset.local().timeseries()
         else:
             covid_timeseries = covid_timeseries.timeseries()
