@@ -14,6 +14,8 @@ from libs.datasets import FIPSPopulation, JHUDataset, CDSDataset
 from libs.datasets.dataset_utils import build_aggregate_county_data_frame
 from libs.datasets.dataset_utils import AggregationLevel
 import libs.datasets.can_model_output_schema as schema
+import pyseir.deployment.model_to_observed_shim as shim
+
 
 from typing import Tuple
 
@@ -241,10 +243,39 @@ class WebUIDataAdaptorV1:
                 np.add(output_for_policy["I"]["ci_50"], output_for_policy["A"]["ci_50"]),
             )  # Infected + Asympt.
             output_model[schema.INFECTED_A] = output_model[schema.INFECTED]
-            output_model[schema.INFECTED_B] = hosp_rescaling_factor * np.interp(
-                t_list_downsampled, t_list, output_for_policy["HGen"]["ci_50"]
-            )  # Hosp General
 
+            # Mixed Solution: Apply Shim to Acute Hospitalizations for Projections while keeping the
+            # original scaling down for the ICU Utilization. Do One at a time.
+
+            # Time to Apply Shims to Make Model Outputs (acute) coincident with latest observed
+            # value.
+
+            # Code that shims general hospital for projections.
+            raw_model_hosp_gen_values = output_for_policy["HGen"]["ci_50"]
+            interpolated_model_hosp_gen_values = np.interp(
+                t_list_downsampled, t_list, raw_model_hosp_gen_values
+            )
+            # Need the raw ICU, but won't use it yet.
+            raw_model_icu_values = output_for_policy["HICU"]["ci_50"]
+            interpolated_model_icu_values = np.interp(
+                t_list_downsampled, t_list, raw_model_icu_values
+            )
+
+            shim_log = structlog.getLogger(scenario=suppression_policy)
+            # Shim the model outputs for acute, but not yet ICU
+            shimmed_acute, _ = shim.shim_model_to_observations(
+                model_acute_ts=interpolated_model_hosp_gen_values,
+                model_icu_ts=interpolated_model_icu_values,
+                fips=fips,
+                t0=t0_simulation,
+                log=shim_log,
+            )
+
+            # Save shimmed arrays to output
+            output_model[schema.INFECTED_B] = shimmed_acute
+            # output_model[schema.INFECTED_C] = shimmed_icu
+
+            # Continue doing the scaling for the ICU utilization in the original way
             raw_model_icu_values = output_for_policy["HICU"]["ci_50"]
             interpolated_model_icu_values = np.interp(
                 t_list_downsampled, t_list, raw_model_icu_values
