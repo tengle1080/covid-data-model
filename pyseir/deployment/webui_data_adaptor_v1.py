@@ -38,7 +38,7 @@ class WebUIDataAdaptorV1:
     def __init__(
         self,
         state,
-        output_interval_days=4,
+        output_interval_days=1,
         run_mode="can-before",
         output_dir=None,
         jhu_dataset=None,
@@ -208,8 +208,23 @@ class WebUIDataAdaptorV1:
             return
         population = self._get_population(fips)
 
+        # Here is where we shimmy just for acute right now
+        baseline_policy = "suppression_policy__inferred"
+        model_acute_ts = pyseir_outputs[baseline_policy]["HGen"]["ci_50"]
+        model_icu_ts = pyseir_outputs[baseline_policy]["HICU"]["ci_50"]
+        idx_offset = int(fit_results["t_today"] - fit_results["t0"])
+        observed_latest_dict = shim.get_latest_observed(fips)
+        shim_log = structlog.getLogger(fips=fips)
+        acute_shim, _ = shim.shim_model_to_observations(
+            model_acute_ts=model_acute_ts,
+            model_icu_ts=model_icu_ts,
+            idx=idx_offset,
+            observed_latest=observed_latest_dict,
+            log=shim_log,
+        )
+
         # Get multiplicative conversion factors to scale model output to fit dataset current values
-        hosp_rescaling_factor, icu_rescaling_factor = self._get_model_to_dataset_conversion_factors(
+        _, icu_rescaling_factor = self._get_model_to_dataset_conversion_factors(
             t0_simulation=t0_simulation, fips=fips, pyseir_outputs=pyseir_outputs,
         )
 
@@ -244,31 +259,19 @@ class WebUIDataAdaptorV1:
             )  # Infected + Asympt.
             output_model[schema.INFECTED_A] = output_model[schema.INFECTED]
 
-            # Time to Apply Shims to Make Model Outputs (acute) coincident with latest observed
-            # value.
-
-            # Code that shims acute hospital and icu numbers.
             raw_model_hosp_gen_values = output_for_policy["HGen"]["ci_50"]
-            interpolated_model_hosp_gen_values = np.interp(
+            interp_model_hosp_gen_values = np.interp(
                 t_list_downsampled, t_list, raw_model_hosp_gen_values
             )
             raw_model_icu_values = output_for_policy["HICU"]["ci_50"]
-            interpolated_model_icu_values = np.interp(
-                t_list_downsampled, t_list, raw_model_icu_values
-            )
+            interp_model_icu_values = np.interp(t_list_downsampled, t_list, raw_model_icu_values)
 
-            shim_log = structlog.getLogger(scenario=suppression_policy)
-            shimmed_acute, shimmed_icu = shim.shim_model_to_observations(
-                model_acute_ts=interpolated_model_hosp_gen_values,
-                model_icu_ts=interpolated_model_icu_values,
-                fips=fips,
-                t0=t0_simulation,
-                log=shim_log,
+            # Time to Apply Shims to Make Model Outputs (acute) coincident with latest observed
+            # value. Save shimmed arrays to output
+            output_model[schema.INFECTED_B] = (interp_model_hosp_gen_values + acute_shim).clip(
+                min=0
             )
-
-            # Save shimmed arrays to output
-            output_model[schema.INFECTED_B] = shimmed_acute
-            output_model[schema.INFECTED_C] = shimmed_icu
+            output_model[schema.INFECTED_C] = icu_rescaling_factor * interp_model_icu_values
 
             # General + ICU beds. don't include vent here because they are also counted in ICU
             output_model[schema.ALL_HOSPITALIZED] = np.add(
@@ -412,9 +415,12 @@ class WebUIDataAdaptorV1:
 
 
 if __name__ == "__main__":
+    from libs.datasets import dataset_cache
+
+    dataset_cache.set_pickle_cache_dir()
     # Need to have a whitelist pre-generated
     # Need to have state output already built
     mapper = WebUIDataAdaptorV1(
-        state="California", output_interval_days=4, run_mode="can-inference-derived"
+        state="California", output_interval_days=1, run_mode="can-inference-derived"
     )
     mapper.generate_state(whitelisted_county_fips=["06037", "06075", "06059"], states_only=False)

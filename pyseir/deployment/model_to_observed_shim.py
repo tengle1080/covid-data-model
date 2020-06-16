@@ -2,13 +2,16 @@ from typing import Sequence
 from datetime import datetime
 
 import numpy as np
+import pandas as pd
 
 from pyseir import load_data
 from pyseir.load_data import HospitalizationCategory
+from libs.datasets import combined_datasets
+from libs.datasets.dataset_utils import AggregationLevel
 
 
 def shim_model_to_observations(
-    model_acute_ts: Sequence, model_icu_ts: Sequence, fips: str, t0: datetime, log
+    model_acute_ts: Sequence, model_icu_ts: Sequence, idx: int, observed_latest: dict, log
 ):
     """
     Take model outputs and shim them s.t. the latest observed value matches the same value for the
@@ -31,52 +34,43 @@ def shim_model_to_observations(
     shimmed_icu: Sequence
         Transformed model_icu_ts Timeseries
     """
-    # f = _strict_match_model_to_observed
-    f = _intralevel_match_model_to_observed
+    f = _strict_match_model_to_observed
+    # f = _intralevel_match_model_to_observed
     # f = _interlevel_match_model_to_observed
-    return f(model_acute_ts, model_icu_ts, fips, t0, log=log)
+    return f(model_acute_ts, model_icu_ts, idx, observed_latest, log)
 
 
 # MOST SIMPLE OPTION
 def _strict_match_model_to_observed(
-    model_acute_ts: np.array, model_icu_ts: np.array, fips: str, t0: datetime, log
+    model_acute_ts: Sequence, model_icu_ts: Sequence, idx: int, observed_latest: dict, log
 ):
     """Most strict. Only shift if current value available at the correct aggregation level"""
 
-    # Get Current Observed Value and Current Days Since Model Started
-    ts_idx_acute, observed_latest_acute = load_data.get_current_hospitalized(
-        fips=fips, t0=t0, category=HospitalizationCategory.HOSPITALIZED
-    )  # Do we have to remove the icu from this? Assuming this is not including ICU but need to
-    # confirm
-
-    ts_idx_icu, observed_latest_icu = load_data.get_current_hospitalized(
-        fips=fips, t0=t0, category=HospitalizationCategory.ICU
-    )
+    observed_latest_acute = observed_latest["current_hospitalized"]
+    observed_latest_icu = observed_latest["current_icu"]
 
     # Only Shim if Current Value is Provided
     if observed_latest_acute is None:
         acute_shim = 0
+    elif observed_latest_acute == 0:
+        acute_shim = 0  # Not implemented while cleaning up 0 vs NaN in combined_dataset
     else:
-        acute_shim = observed_latest_acute - model_acute_ts[ts_idx_acute]
+        acute_shim = observed_latest_acute - model_acute_ts[idx]
 
     if observed_latest_icu is None:
         icu_shim = 0
+    elif observed_latest_icu == 0:
+        icu_shim = 0
     else:
-        icu_shim = observed_latest_icu - model_icu_ts[ts_idx_icu]
-
-    shimmed_acute = acute_shim + model_acute_ts
-    shimmed_clipped_acute = shimmed_acute.clip(min=0)
-    shimmed_icu = icu_shim + model_icu_ts
-    shimmed_clipped_icu = shimmed_icu.clip(min=0)
+        icu_shim = observed_latest_icu - model_icu_ts[idx]
 
     log.info(
         "Model to Observed Shim Applied",
-        fips=fips,
         acute_shim=np.round(acute_shim),
         icu_shim=np.round(icu_shim),
     )
 
-    return shimmed_clipped_acute, shimmed_clipped_icu
+    return acute_shim, icu_shim
 
 
 def _interlevel_match_model_to_observed(
@@ -159,6 +153,23 @@ def _intralevel_match_model_to_observed(
     )
 
     return shimmed_clipped_acute, shimmed_clipped_icu
+
+
+def get_latest_observed(fips: str) -> dict:
+    """
+
+    :param fips:
+    :return:
+    """
+    latest_df = combined_datasets.build_us_latest_with_all_fields()
+    if len(fips) == 2:
+        df = latest_df.get_subset(aggregation_level=AggregationLevel.STATE, fips=fips)
+    else:
+        df = latest_df.get_subset(aggregation_level=AggregationLevel.COUNTY, fips=fips)
+
+    records = df.data.to_dict("record")
+    assert len(records) == 1
+    return records[0]
 
 
 #
