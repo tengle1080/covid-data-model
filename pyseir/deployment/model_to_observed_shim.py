@@ -99,7 +99,6 @@ def _intralevel_match_model_to_observed(
 
     observed_latest_total_hospitalized = observed_latest["current_hospitalized"]
     observed_latest_icu = observed_latest["current_icu"]
-    observed_latest_acute = observed_latest_total_hospitalized - observed_latest_icu
 
     # Apply the first pass by looking at observed total hospitalization
     if observed_latest_total_hospitalized is None:
@@ -129,12 +128,12 @@ def _intralevel_match_model_to_observed(
     log.info(
         event="Model to Observed Intra-Level Shim Applied:",
         observed_latest_total_hospitalized=observed_latest_total_hospitalized,
+        observed_latest_icu=observed_latest_icu,
         acute_shim=np.round(acute_shim),
         icu_shim=np.round(icu_shim),
-        acute_estimate_from_observed=observed_latest_acute,
-        icu_observed=observed_latest_icu,
         acute_model=np.round(model_acute_ts[idx]),
         icu_model=np.round(model_icu_ts[idx]),
+        model_latest_total_hospitalized=np.round(model_acute_ts[idx] + model_icu_ts[idx]),
     )
 
     return acute_shim, icu_shim
