@@ -23,19 +23,19 @@ def shim_model_to_observations(
         Model array sequence for acute prevalence
     model_icu_ts
         Model array sequence for icu prevalence
-    fips
-        Region of interest
-    t0
-        Datetime of beginning of model
+    idx
+        Index on which to align
+    observed_latest
+        Dictionary of latest values taken from combined dataset for the fips of interest.
     Return
     ------
-    shimmed_acute: Sequence
-        Transformed model_acute_ts Timeseries
-    shimmed_icu: Sequence
-        Transformed model_icu_ts Timeseries
+    shimmed_acute: float
+        Value to shim the timeseries by
+    shimmed_icu: float
+        Value to shim the timeseries by
     """
-    f = _strict_match_model_to_observed
-    # f = _intralevel_match_model_to_observed
+    # f = _strict_match_model_to_observed
+    f = _intralevel_match_model_to_observed
     # f = _interlevel_match_model_to_observed
     return f(model_acute_ts, model_icu_ts, idx, observed_latest, log)
 
@@ -46,8 +46,9 @@ def _strict_match_model_to_observed(
 ):
     """Most strict. Only shift if current value available at the correct aggregation level"""
 
-    observed_latest_acute = observed_latest["current_hospitalized"]
+    observed_latest_total_hospitalized = observed_latest["current_hospitalized"]
     observed_latest_icu = observed_latest["current_icu"]
+    observed_latest_acute = observed_latest_total_hospitalized - observed_latest_icu
 
     # Only Shim if Current Value is Provided
     if observed_latest_acute is None:
@@ -65,7 +66,7 @@ def _strict_match_model_to_observed(
         icu_shim = observed_latest_icu - model_icu_ts[idx]
 
     log.info(
-        "Model to Observed Shim Applied",
+        "Model to Observed Strict Shim Applied",
         acute_shim=np.round(acute_shim),
         icu_shim=np.round(icu_shim),
     )
@@ -87,72 +88,56 @@ def _interlevel_match_model_to_observed(
 
 
 def _intralevel_match_model_to_observed(
-    model_acute_ts: np.array, model_icu_ts: np.array, fips: str, t0: datetime, log=None
+    model_acute_ts: Sequence, model_icu_ts: Sequence, idx: int, observed_latest: dict, log
 ):
 
     """
     Allow shims to take into account both latest acute hospitalization and latest icu
     hospitalizations for a given Aggregate Level. This does not estimate county from state
     data.
-
-    Parameters
-    ----------
-    model_acute_ts
-        Model array sequence for acute prevalence
-    model_icu_ts
-        Model array sequence for icu prevalence
-    fips
-        Region of interest
-    t0
-        Datetime of beginning of model
-    Return
-    ------
-    shimmed_acute: Sequence
-        Transformed model_acute_ts Timeseries
-    shimmed_icu: Sequence
-        Transformed model_icu_ts Timeseries
     """
 
-    # Get Current Observed Value and Current Days Since Model Started
-    ts_idx_acute, observed_latest_acute = load_data.get_current_hospitalized(
-        fips=fips, t0=t0, category=HospitalizationCategory.HOSPITALIZED
-    )
+    observed_latest_total_hospitalized = observed_latest["current_hospitalized"]
+    observed_latest_icu = observed_latest["current_icu"]
+    observed_latest_acute = observed_latest_total_hospitalized - observed_latest_icu
 
-    ts_idx_icu, observed_latest_icu = load_data.get_current_hospitalized(
-        fips=fips, t0=t0, category=HospitalizationCategory.ICU
-    )
-
-    # Only Shim Hospitalized if Current Value is Provided
-    if observed_latest_acute is None:
+    # Apply the first pass by looking at observed total hospitalization
+    if observed_latest_total_hospitalized is None:
         acute_shim = 0
+        icu_shim = 0
+    elif observed_latest_total_hospitalized == 0:
+        # Special case for now while strengthening promises of "get latest from combined dataset"
+        # to always provide None/NaN instead of 0 as a placeholder.
+        acute_shim = 0
+        icu_shim = 0
     else:
-        acute_shim = observed_latest_acute - model_acute_ts[ts_idx_acute]
+        # Calculate the tracking error between observed total and model total
+        model_latest_total_hosp = model_acute_ts[idx] + model_icu_ts[idx]
+        total_hospitalized_error = observed_latest_total_hospitalized - model_latest_total_hosp
+        # Apportion that error based on relative weight
+        acute_shim = total_hospitalized_error * (model_acute_ts[idx] / model_latest_total_hosp)
+        icu_shim = total_hospitalized_error * (model_icu_ts[idx] / model_latest_total_hosp)
 
-    if observed_latest_icu is None:  # No Level Specific ICU Data Available
-        if observed_latest_acute is None:  # Nor Level Specific Hosp Data
-            icu_shim = 0  # No scaling applied
-        else:  # No Current ICU but Current Acute Available
-            # Convert ICU using the ratio of model ICU to model acute
-            numerator = model_icu_ts[ts_idx_icu]
-            denominator = model_acute_ts[ts_idx_acute]
-            convert_acute_to_icu_ratio = numerator / denominator
-            icu_shim = acute_shim * convert_acute_to_icu_ratio
-    else:  # Use provided data to shim at that aggregation level
-        icu_shim = observed_latest_icu - model_icu_ts[ts_idx_icu]
-
-    shimmed_acute = acute_shim + model_acute_ts
-    shimmed_clipped_acute = shimmed_acute.clip(min=0)
-    shimmed_icu = icu_shim + model_icu_ts
-    shimmed_clipped_icu = shimmed_icu.clip(min=0)
+    # Now have the special case of observed ICU overwriting the icu_shim
+    if observed_latest_icu is None:
+        pass
+    elif observed_latest_icu == 0:
+        pass
+    else:
+        icu_shim = observed_latest_icu - model_icu_ts[idx]
 
     log.info(
-        "Model to Observed Shim Applied",
-        fips=fips,
+        event="Model to Observed Intra-Level Shim Applied:",
+        observed_latest_total_hospitalized=observed_latest_total_hospitalized,
         acute_shim=np.round(acute_shim),
         icu_shim=np.round(icu_shim),
+        acute_estimate_from_observed=observed_latest_acute,
+        icu_observed=observed_latest_icu,
+        acute_model=np.round(model_acute_ts[idx]),
+        icu_model=np.round(model_icu_ts[idx]),
     )
 
-    return shimmed_clipped_acute, shimmed_clipped_icu
+    return acute_shim, icu_shim
 
 
 def get_latest_observed(fips: str) -> dict:

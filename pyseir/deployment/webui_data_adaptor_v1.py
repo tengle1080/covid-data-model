@@ -215,7 +215,7 @@ class WebUIDataAdaptorV1:
         idx_offset = int(fit_results["t_today"] - fit_results["t0"])
         observed_latest_dict = shim.get_latest_observed(fips)
         shim_log = structlog.getLogger(fips=fips)
-        acute_shim, _ = shim.shim_model_to_observations(
+        acute_shim, icu_shim = shim.shim_model_to_observations(
             model_acute_ts=model_acute_ts,
             model_icu_ts=model_icu_ts,
             idx=idx_offset,
@@ -223,10 +223,10 @@ class WebUIDataAdaptorV1:
             log=shim_log,
         )
 
-        # Get multiplicative conversion factors to scale model output to fit dataset current values
-        _, icu_rescaling_factor = self._get_model_to_dataset_conversion_factors(
-            t0_simulation=t0_simulation, fips=fips, pyseir_outputs=pyseir_outputs,
-        )
+        # # Get multiplicative conversion factors to scale model output to fit dataset current values
+        # _, icu_rescaling_factor = self._get_model_to_dataset_conversion_factors(
+        #     t0_simulation=t0_simulation, fips=fips, pyseir_outputs=pyseir_outputs,
+        # )
 
         # Iterate through each suppression policy.
         # Model output is interpolated to the dates desired for the API.
@@ -271,7 +271,7 @@ class WebUIDataAdaptorV1:
             output_model[schema.INFECTED_B] = (interp_model_hosp_gen_values + acute_shim).clip(
                 min=0
             )
-            output_model[schema.INFECTED_C] = icu_rescaling_factor * interp_model_icu_values
+            output_model[schema.INFECTED_C] = (interp_model_icu_values + icu_shim).clip(min=0)
 
             # General + ICU beds. don't include vent here because they are also counted in ICU
             output_model[schema.ALL_HOSPITALIZED] = np.add(
@@ -304,7 +304,7 @@ class WebUIDataAdaptorV1:
                 output_model[schema.Rt] = 0
                 output_model[schema.Rt_ci90] = 0
 
-            output_model[schema.CURRENT_VENTILATED] = icu_rescaling_factor * np.interp(
+            output_model[schema.CURRENT_VENTILATED] = icu_shim + np.interp(
                 t_list_downsampled, t_list, output_for_policy["HVent"]["ci_50"]
             )
             output_model[schema.POPULATION] = population
