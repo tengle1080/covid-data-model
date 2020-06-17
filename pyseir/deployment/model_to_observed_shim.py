@@ -100,8 +100,14 @@ def _intralevel_match_model_to_observed(
     observed_latest_total_hospitalized = observed_latest["current_hospitalized"]
     observed_latest_icu = observed_latest["current_icu"]
 
-    # Apply the first pass by looking at observed total hospitalization
+    # Inconsistent input data between NoneType and float np.nan. Switching all to np.nan
     if observed_latest_total_hospitalized is None:
+        observed_latest_total_hospitalized = np.nan
+    if observed_latest_icu is None:
+        observed_latest_icu = np.nan
+
+    # Apply the first pass by looking at observed total hospitalization
+    if np.isnan(observed_latest_total_hospitalized):
         acute_shim = 0
         icu_shim = 0
     elif observed_latest_total_hospitalized == 0:
@@ -118,7 +124,7 @@ def _intralevel_match_model_to_observed(
         icu_shim = total_hospitalized_error * (model_icu_ts[idx] / model_latest_total_hosp)
 
     # Now have the special case of observed ICU overwriting the icu_shim
-    if observed_latest_icu is None:
+    if np.isnan(observed_latest_icu):
         pass
     elif observed_latest_icu == 0:
         pass
