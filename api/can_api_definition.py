@@ -11,7 +11,7 @@ Documentation at https://github.com/covid-projections/covid-data-model/tree/mast
 
 class _ResourceUsageProjection(pydantic.BaseModel):
     peakShortfall: int = pydantic.Field(
-        ..., description="Shortfall of resource needed at the peek utilization"
+        ..., description="Shortfall of resource needed at the peak utilization"
     )
     peakDate: Optional[datetime.date] = pydantic.Field(
         ..., description="Date of peak resource utilization"

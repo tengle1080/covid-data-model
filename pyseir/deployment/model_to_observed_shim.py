@@ -10,6 +10,45 @@ from libs.datasets import combined_datasets
 from libs.datasets.dataset_utils import AggregationLevel
 
 
+def shim_deaths_model_to_observations(
+    model_death_ts: Sequence, idx: int, observed_latest: dict, log
+):
+    """Enforce the constraint that cumulative model deaths up to today equals cumulative observed
+    deaths up to today."""
+    observed_latest_cum_deaths = observed_latest["deaths"]
+    if observed_latest_cum_deaths is None:
+        observed_latest_cum_deaths = np.nan
+
+    model_latest_cum_deaths = model_death_ts[idx]
+
+    if np.isnan(observed_latest_cum_deaths):
+        death_shim = 0
+    elif observed_latest_cum_deaths == 0:
+        death_shim = 0
+    else:
+        death_shim = observed_latest_cum_deaths - model_latest_cum_deaths
+
+    # We now need to decide where to apply all of these deaths. If we were visualizing the
+    # timeseries, then we would have to smooth future and current.
+
+    # These all break the internal consistency of the model.
+    # I can add a single day bolus today to fix the sum.
+    # I can multiply the previous days by a factor that recovers the sum
+    # I can shift them all by a fixed amount to recover the tracking error
+
+    # To be consistent with the other bodges, I will shim all values by the same amount so that the
+    # cumulative model today equals cumulative observed today. This will shift the future values by
+    # the same.
+    log.info(
+        event="Death Shim Applied",
+        death_shim=death_shim,
+        observed_latest_cum_deaths=observed_latest_cum_deaths,
+        model_latest_cum_deaths=model_latest_cum_deaths,
+    )
+
+    return death_shim
+
+
 def shim_model_to_observations(
     model_acute_ts: Sequence, model_icu_ts: Sequence, idx: int, observed_latest: dict, log
 ):

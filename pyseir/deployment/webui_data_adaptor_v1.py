@@ -212,12 +212,19 @@ class WebUIDataAdaptorV1:
         baseline_policy = "suppression_policy__inferred"
         model_acute_ts = pyseir_outputs[baseline_policy]["HGen"]["ci_50"]
         model_icu_ts = pyseir_outputs[baseline_policy]["HICU"]["ci_50"]
+        model_death_ts = pyseir_outputs[baseline_policy]["total_deaths"]["ci_50"]
         idx_offset = int(fit_results["t_today"] - fit_results["t0"])
         observed_latest_dict = shim.get_latest_observed(fips)
         shim_log = structlog.getLogger(fips=fips)
         acute_shim, icu_shim = shim.shim_model_to_observations(
             model_acute_ts=model_acute_ts,
             model_icu_ts=model_icu_ts,
+            idx=idx_offset,
+            observed_latest=observed_latest_dict,
+            log=shim_log,
+        )
+        death_shim = shim.shim_deaths_model_to_observations(
+            model_death_ts=model_death_ts,
             idx=idx_offset,
             observed_latest=observed_latest_dict,
             log=shim_log,
@@ -266,21 +273,26 @@ class WebUIDataAdaptorV1:
             raw_model_icu_values = output_for_policy["HICU"]["ci_50"]
             interp_model_icu_values = np.interp(t_list_downsampled, t_list, raw_model_icu_values)
 
+            raw_model_deaths_values = output_for_policy["total_deaths"]["ci_50"]
+            interp_model_deaths_values = np.interp(
+                t_list_downsampled, t_list, raw_model_deaths_values
+            )
+
             # Time to Apply Shims to Make Model Outputs (acute) coincident with latest observed
-            # value. Save shimmed arrays to output
+            # value. Save shimmed arrays to output. Could simplify all these conversions with a for
+            # loop.
             output_model[schema.INFECTED_B] = (interp_model_hosp_gen_values + acute_shim).clip(
                 min=0
             )
             output_model[schema.INFECTED_C] = (interp_model_icu_values + icu_shim).clip(min=0)
+            output_model[schema.DEAD] = (interp_model_deaths_values + death_shim).clip(min=0)
 
             # General + ICU beds. don't include vent here because they are also counted in ICU
             output_model[schema.ALL_HOSPITALIZED] = np.add(
                 output_model[schema.INFECTED_B], output_model[schema.INFECTED_C]
             )
             output_model[schema.ALL_INFECTED] = output_model[schema.INFECTED]
-            output_model[schema.DEAD] = np.interp(
-                t_list_downsampled, t_list, output_for_policy["total_deaths"]["ci_50"]
-            )
+
             final_beds = np.mean(output_for_policy["HGen"]["capacity"])
             output_model[schema.BEDS] = final_beds
             output_model[schema.CUMULATIVE_INFECTED] = np.interp(
