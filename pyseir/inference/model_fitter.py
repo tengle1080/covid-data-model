@@ -111,8 +111,8 @@ class ModelFitter:
         ref_date=datetime(year=2020, month=1, day=1),
         min_deaths=2,
         n_years=1,
-        cases_to_deaths_err_factor=0.5,
-        hospital_to_deaths_err_factor=0.5,
+        cases_to_deaths_err_factor=np.sqrt(2),
+        hospital_to_deaths_err_factor=1,
         percent_error_on_max_observation=0.5,
         with_age_structure=False,
     ):
@@ -314,7 +314,6 @@ class ModelFitter:
         hosp_stdev: array-like
             Float uncertainties (stdev) for hosp data.
         deaths_stdev: array-like
-            Float uncertainties (stdev) for death data.
             Float uncertainties (stdev) for death data.
         """
         # Stdev 50% of values.
@@ -546,7 +545,8 @@ class ModelFitter:
 
         not_penalized_score = chi2_deaths + chi2_cases + chi2_hosp
 
-        # Calculate the final score as the product of the not_allowed_days_penalty and not_penalized_score
+        # Calculate the final score as the sum of the not_allowed_days_penalty
+        # and not_penalized_score
         score = not_allowed_days_penalty + (chi2_deaths + chi2_cases + chi2_hosp)
 
         return score
