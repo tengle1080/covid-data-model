@@ -547,7 +547,7 @@ class ModelFitter:
         not_penalized_score = chi2_deaths + chi2_cases + chi2_hosp
 
         # Calculate the final score as the product of the not_allowed_days_penalty and not_penalized_score
-        score = not_allowed_days_penalty + (chi2_deaths + chi2_cases + chi2_hosp)
+        score = not_allowed_days_penalty + (2 * chi2_deaths + chi2_cases + 2 * chi2_hosp)
 
         return score
 
