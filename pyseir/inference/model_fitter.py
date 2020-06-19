@@ -102,6 +102,7 @@ class ModelFitter:
     )
 
     REFF_LOWER_BOUND = 0.7
+    CHI2_CASE_WEIGHT = 0.5
 
     steady_state_exposed_to_infected_ratio = 1.2
 
@@ -111,8 +112,8 @@ class ModelFitter:
         ref_date=datetime(year=2020, month=1, day=1),
         min_deaths=2,
         n_years=1,
-        cases_to_deaths_err_factor=0.5,
-        hospital_to_deaths_err_factor=0.5,
+        cases_to_deaths_err_factor=1,
+        hospital_to_deaths_err_factor=1,
         percent_error_on_max_observation=0.5,
         with_age_structure=False,
     ):
@@ -544,10 +545,10 @@ class ModelFitter:
         self.dof_deaths = (self.observed_new_deaths > 0).sum()
         self.dof_cases = (self.observed_new_cases > 0).sum()
 
-        not_penalized_score = chi2_deaths + chi2_cases + chi2_hosp
+        weighted_score = chi2_deaths + chi2_cases * ModelFitter.CHI2_CASE_WEIGHT + chi2_hosp
 
-        # Calculate the final score as the product of the not_allowed_days_penalty and not_penalized_score
-        score = not_allowed_days_penalty + (chi2_deaths + chi2_cases + chi2_hosp)
+        # Add Penalty Scores
+        score = not_allowed_days_penalty + weighted_score
 
         return score
 
