@@ -134,6 +134,8 @@ class JHUDataset(data_source.DataSource):
         has_county = data[cls.Fields.COUNTY].notnull()
         rows_to_replace = has_county & data[cls.Fields.FIPS].isnull()
         data.loc[rows_to_replace, cls.Fields.FIPS] = enums.UNKNOWN_FIPS
+        print("Setting unknown FIPS to")
+        print(data.loc[rows_to_replace].groupby(["Combined_Key"]).last())
         return data
 
     @classmethod

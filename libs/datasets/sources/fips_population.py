@@ -62,7 +62,7 @@ class FIPSPopulation(data_source.DataSource):
             row = {
                 cls.Fields.STATE: state,
                 # TODO(chris): Possibly separate fips out by state prefix
-                cls.Fields.FIPS: enums.UNKNOWN_FIPS,
+                cls.Fields.FIPS: ABBREV_US_FIPS[state] + "999",
                 cls.Fields.POPULATION: None,
                 cls.Fields.COUNTY: "Unknown",
             }

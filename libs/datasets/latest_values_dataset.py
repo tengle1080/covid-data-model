@@ -23,6 +23,7 @@ class LatestValuesDataset(dataset_base.DatasetBase):
         CommonIndexFields.COUNTRY,
         CommonIndexFields.STATE,
     ]
+    NEW_INDEX_FIELDS = [CommonFields.FIPS]
 
     class Fields(CommonFields):
         COUNTRY = CommonIndexFields.COUNTRY
@@ -69,6 +70,12 @@ class LatestValuesDataset(dataset_base.DatasetBase):
         is_state = data[cls.Fields.AGGREGATE_LEVEL] == AggregationLevel.STATE.value
         state_fips = data.loc[is_state, cls.Fields.STATE].map(us_state_abbrev.ABBREV_US_FIPS)
         data.loc[is_state, cls.Fields.FIPS] = state_fips
+
+        dups = data.groupby(cls.NEW_INDEX_FIELDS).filter(lambda group: len(group) > 1).sort_index()
+        print(source.SOURCE_NAME)
+        if not dups.empty:
+            print(f"Dups in latest {source.SOURCE_NAME}:\n{dups}")
+            data.drop_duplicates(cls.NEW_INDEX_FIELDS, inplace=True)
 
         return cls(data)
 

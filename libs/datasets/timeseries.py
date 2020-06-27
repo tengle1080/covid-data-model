@@ -1,6 +1,8 @@
 import warnings
 from typing import List, Optional
 import pandas as pd
+
+from covidactnow.datapublic.common_fields import COMMON_FIELDS_TIMESERIES_KEYS
 from libs import us_state_abbrev
 from libs.datasets import dataset_utils
 from libs.datasets import dataset_base
@@ -32,6 +34,8 @@ class TimeseriesDataset(dataset_base.DatasetBase):
         CommonIndexFields.STATE,
         CommonIndexFields.FIPS,
     ]
+
+    NEW_INDEX_FIELDS = COMMON_FIELDS_TIMESERIES_KEYS
 
     def __init__(self, data: pd.DataFrame):
         self.data = data
@@ -216,7 +220,19 @@ class TimeseriesDataset(dataset_base.DatasetBase):
         data.loc[is_state, cls.Fields.FIPS] = state_fips
 
         # Choosing to sort by date
+        # data = data.loc[(data.fips.notna()) & (data.fips != "99999") & (data.fips != "88888") & (data.country == "USA"), :]
+        data = data.loc[(data.fips.notna()) & (data.country == "USA"), :]
+        dups = (
+            data.groupby(COMMON_FIELDS_TIMESERIES_KEYS)
+            .filter(lambda group: len(group) > 1)
+            .sort_index()
+        )
+        print(source.SOURCE_NAME)
+        if not dups.empty:
+            print(f"Dups in ts {source.SOURCE_NAME}:\n{dups}")
+            data.drop_duplicates(COMMON_FIELDS_TIMESERIES_KEYS, inplace=True)
         data = data.sort_values(cls.Fields.DATE)
+        data = data.convert_dtypes()
         return cls(data)
 
     @classmethod

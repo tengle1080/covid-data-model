@@ -1,9 +1,14 @@
 import logging
+import pathlib
 import re
 
 import pytest
+import structlog
+from more_itertools import one
 
+from covidactnow.datapublic.common_fields import COMMON_FIELDS_TIMESERIES_KEYS
 from libs.datasets import combined_datasets, CommonFields
+from libs.datasets.combined_datasets import build_timeseries, _build_dataframe
 from libs.datasets.dataset_utils import AggregationLevel
 from libs.datasets.sources.cmdc import CmdcDataSource
 from libs.datasets.sources.texas_hospitalizations import TexasHospitalizations
@@ -14,11 +19,25 @@ from libs.datasets import NYTimesDataset
 from libs.datasets import CDSDataset
 from libs.datasets import CovidTrackingDataSource
 from libs.datasets import NevadaHospitalAssociationData
+from covidactnow.datapublic.common_df import write_df_as_csv, read_csv_to_indexed_df
+from datetime import datetime
 
+from io import StringIO
+
+from libs.datasets.dataset_utils import AggregationLevel
+from libs.datasets.sources import cds_dataset
+from libs.datasets.timeseries import TimeseriesDataset
+from test.dataset_utils_test import to_dict
+import pandas as pd
+import numpy as np
+import pytest
 
 # Tests to make sure that combined datasets are building data with unique indexes
 # If this test is failing, it means that there is one of the data sources that
 # is returning multiple values for a single row.
+from test.dataset_utils_test import to_dict
+
+
 def test_unique_index_values_us_timeseries():
     timeseries = combined_datasets.build_us_timeseries_with_all_fields()
     timeseries_data = timeseries.data.set_index(timeseries.INDEX_FIELDS)
@@ -114,3 +133,75 @@ def test_expected_field_in_sources(data_source_cls):
             else:
                 logging.info(f"Ignoring {state} in {data_source.SOURCE_NAME}")
         assert len(good_state) >= 48
+
+
+def read_csv_str(csv_str: str) -> pd.DataFrame:
+    return pd.read_csv(
+        StringIO(csv_str),
+        parse_dates=[CommonFields.DATE],
+        dtype={CommonFields.FIPS: str},
+        low_memory=False,
+    )
+
+
+def test_build_timeseries():
+    data_a = read_csv_str(
+        "county,state,fips,country,aggregate_level,date,cases\n"
+        "Jones County,ZZ,97123,USA,county,2020-04-01,1\n"
+    ).set_index(COMMON_FIELDS_TIMESERIES_KEYS)
+    data_b = read_csv_str(
+        "county,state,fips,country,aggregate_level,date,cases\n"
+        "Jones County,ZZ,97123,USA,county,2020-04-01,2\n"
+    ).set_index(COMMON_FIELDS_TIMESERIES_KEYS)
+    datasets = {"source_a": data_a, "source_b": data_b}
+
+    combined = _build_dataframe({"cases": ["source_a", "source_b"]}, datasets)
+    assert combined.at[("97123", "2020-04-01"), "cases"] == 2
+
+    combined = _build_dataframe({"cases": ["source_b", "source_a"]}, datasets)
+    assert combined.at[("97123", "2020-04-01"), "cases"] == 1
+
+
+def test_build_latest():
+    data_a = (
+        read_csv_str(
+            "county,state,fips,country,aggregate_level,date,cases\n"
+            "Jones County,ZZ,97123,USA,county,2020-04-01,1\n"
+            "Three County,XY,97333,USA,county,2020-04-01,3\n"
+        )
+        .groupby(CommonFields.FIPS)
+        .last()
+    )
+    data_b = (
+        read_csv_str(
+            "county,state,fips,country,aggregate_level,date,cases\n"
+            "Jones County,ZZ,97123,USA,county,2020-04-01,2\n"
+        )
+        .groupby(CommonFields.FIPS)
+        .last()
+    )
+    datasets = {"source_a": data_a, "source_b": data_b}
+
+    combined = _build_dataframe({"cases": ["source_a", "source_b"]}, datasets)
+    assert combined.at["97123", "cases"] == 2
+    assert combined.at["97333", "cases"] == 3
+
+    combined = _build_dataframe({"cases": ["source_b", "source_a"]}, datasets)
+    assert combined.at["97123", "cases"] == 1
+    assert combined.at["97333", "cases"] == 3
+
+
+def test_build_timeseries_override():
+    data_a = read_csv_str(
+        "fips,date,cases\n" "97123,2020-04-01,1\n" "97123,2020-04-02,\n"
+    ).set_index(COMMON_FIELDS_TIMESERIES_KEYS)
+    data_b = read_csv_str(
+        "fips,date,cases\n" "97123,2020-04-01,\n" "97123,2020-04-02,2\n"
+    ).set_index(COMMON_FIELDS_TIMESERIES_KEYS)
+    datasets = {"source_a": data_a, "source_b": data_b}
+
+    combined = _build_dataframe({"cases": ["source_a", "source_b"]}, datasets)
+    assert combined.loc["97123", "cases"].replace({np.nan: None}).tolist() == [None, 2]
+
+    combined = _build_dataframe({"cases": ["source_b", "source_a"]}, datasets)
+    assert combined.loc["97123", "cases"].replace({np.nan: None}).tolist() == [1, None]
